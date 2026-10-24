@@ -56,8 +56,11 @@ pub struct Message {
 // 沒看過的 type 會解析失敗,而不是被默默丟掉(fail-closed)。
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Content {
+    // 每一種內容都可以帶 `meta`:串流事件上的 provider 資料,組回 Content 時不能默默丟掉。
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "ProviderMetadata::is_empty")]
+        meta: ProviderMetadata,
     },
     Thinking {
         text: String,
@@ -70,6 +73,8 @@ pub enum Content {
         name: String,
         /// 模型給的原始 JSON。不可信,交給工具層驗證後才解析。
         args_json: String,
+        #[serde(default, skip_serializing_if = "ProviderMetadata::is_empty")]
+        meta: ProviderMetadata,
     },
     ToolResult {
         call_id: String,
@@ -108,6 +113,9 @@ pub struct Response {
     pub content: Vec<Content>,
     pub stop: StopReason,
     pub usage: Usage,
+    /// `Finish` 事件帶來的 provider 資料。
+    #[serde(default, skip_serializing_if = "ProviderMetadata::is_empty")]
+    pub meta: ProviderMetadata,
 }
 
 /// 中立層「只保管、不解讀」的資料,以 provider 名稱為 key。
@@ -139,6 +147,13 @@ impl ProviderMetadata {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// 把 `other` 的資料併進來,同名的以 `other` 為準。
+    // 參數是 `other: ProviderMetadata`(不是 `&`):呼叫者把整個 `other` 交給我們,之後不能再用它。
+    // 所以可以直接把裡面的值「搬」過來,不必複製。Java 傳物件永遠是傳參考,沒有「交出所有權」這回事。
+    pub fn merge(&mut self, other: ProviderMetadata) {
+        self.0.extend(other.0);
+    }
 }
 
 // ---- 手寫的 Debug:只印結構,不印內容(design.md §7 第 2 層) ----
@@ -167,7 +182,11 @@ impl fmt::Debug for Content {
         // `match` 必須涵蓋每一種 variant,漏一種就編譯失敗。
         // 以後 enum 加新的 variant,這裡會被 compiler 逼著補上,不會忘記遮罩。
         match self {
-            Content::Text { text } => f.debug_struct("Text").field("bytes", &text.len()).finish(),
+            Content::Text { text, meta } => f
+                .debug_struct("Text")
+                .field("bytes", &text.len())
+                .field("meta", meta)
+                .finish(),
             Content::Thinking { text, meta } => f
                 .debug_struct("Thinking")
                 .field("bytes", &text.len())
@@ -177,11 +196,13 @@ impl fmt::Debug for Content {
                 id,
                 name,
                 args_json,
+                meta,
             } => f
                 .debug_struct("ToolCall")
                 .field("id", id)
                 .field("name", name)
                 .field("args_bytes", &args_json.len())
+                .field("meta", meta)
                 .finish(),
             Content::ToolResult {
                 call_id,
@@ -210,7 +231,10 @@ mod tests {
     use serde_json::json;
 
     fn text(s: &str) -> Content {
-        Content::Text { text: s.to_owned() }
+        Content::Text {
+            text: s.to_owned(),
+            meta: ProviderMetadata::default(),
+        }
     }
 
     #[test]
@@ -243,6 +267,7 @@ mod tests {
                     id: "call_1".into(),
                     name: "read_file".into(),
                     args_json: r#"{"path":"a.toml"}"#.into(),
+                    meta: ProviderMetadata::default(),
                 },
                 Content::ToolResult {
                     call_id: "call_1".into(),

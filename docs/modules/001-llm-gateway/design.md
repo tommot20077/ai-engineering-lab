@@ -69,6 +69,11 @@ pub enum StopKind { EndTurn, MaxTokens, StopSequence, ToolUse, Refusal, PauseTur
   Vercel 的 `error` 事件,不必另外做一個 variant。
 - 沒看過的 stop reason 對應到 `Unknown`,`raw` 保留原值;要不要當成失敗由上層決定
   (Agent loop 會當成失敗,fail-closed)。
+- `Accumulator` 把事件組回 `Response`,同時檢查協定:`MessageStart` 必須最先、只出現一次;
+  delta / end 必須對應到已開啟、種類相同的區塊;`Finish` 時不能有未關閉的區塊;
+  `Finish` 之後不能再有事件;內容總量超過上限就拒絕。違反任何一條都回 `Protocol`。
+- 事件上的 `meta` 一律保留:`Content` 的每個 variant、以及 `Response`,都帶 `meta`
+  (實作第 4 步時補上,原本只有 `Thinking` 有)。
 
 ## 4. 提案:Request / Message 型別
 
