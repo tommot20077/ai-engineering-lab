@@ -5,7 +5,7 @@
 ## 目前位置
 
 - **模組**:001 LLM Gateway — 設計中(尚未寫任何程式)
-- **下一步**:討論 Gateway 的範圍與第一個設計分岔(crate 結構、provider 抽象方式)
+- **下一步**:寫 `docs/modules/001-llm-gateway/design.md`,彙整 D-006~D-011,並對剩下的項目(錯誤型別與重試分類、串流中途失敗語意、密鑰處理、執行期 dispatch、Request/Message 型別)提出預設方案給使用者審
 - **最後更新**:2026-10-24
 
 ## 決策
@@ -17,6 +17,12 @@
 | D-003 | 不用 GSD,每模組只寫 design + retro | Go 專案文件:程式 ≈ 17:1,回饋太慢 | 2026-10-24 |
 | D-004 | Claude 寫、使用者讀;架構由使用者選 | 使用者目標是 Rust 語法 + 架構設計,寫 Rust 目前慢 | 2026-10-24 |
 | D-005 | 第一個模組 = LLM Gateway | 最好的 Rust 入門(async/serde/錯誤/streaming),也是後面所有模組的地基 | 2026-10-24 |
+| D-006 | Gateway 先做 library crate(`crates/llm`),再包 server(`crates/gateway`);Cargo workspace | 核心邏輯與傳輸方式分離;Agent/Eval 可直接依賴 `llm` | 2026-10-24 |
+| D-007 | 完整測試金字塔 + eval 分離(見 CLAUDE.md「測試策略」) | 使用者重視架構、效能、安全;根基優先於速度 | 2026-10-24 |
+| D-008 | 第一個 adapter = Anthropic(raw HTTP via `reqwest`,`anthropic-version: 2026-10-21`,預設模型 `claude-sonnet-5-5`,使用者指定) | 使用者手上有 Claude API key;Rust 無官方 SDK | 2026-10-24 |
+| D-009 | Provider trait streaming-first:核心是 `stream()`,`complete()` 為收集 stream 的預設方法;事件 enum 自己定義為中立格式;不支援 streaming 的 provider 把整份回應包成一批事件 | 單一資料路徑;可中途截斷;首字延遲低。Embedding/Rerank 另立 trait(介面隔離) | 2026-10-24 |
+| D-010 | 事件 enum = 語意事件 + index,參考 Vercel AI SDK:每種段落(文字/思考/工具)都有 start/delta/end;每個事件可帶 opaque provider metadata;StopReason 同時保留 unified 與 raw;錯誤是串流中的一種事件 | 使用者端最好用、各家好翻譯;opaque 欄位保住必須原樣回傳的資料(如 thinking 簽章) | 2026-10-24 |
+| D-011 | 對外格式與內部格式分離:之後在 gateway **額外開**一個 OpenAI 相容端點(與自家原生 API 並存,不是取代),做成「對外 adapter」(中立事件 → OpenAI chunk),`llm` crate 不動 | Ports & Adapters;內部保留完整資訊,對外相容現成 client | 2026-10-24 |
 
 ## 模組
 

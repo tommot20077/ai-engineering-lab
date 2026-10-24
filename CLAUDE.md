@@ -17,6 +17,34 @@ Python 模型層  微調 · embedding/reranker · 推論服務 → 以 HTTP/gRPC
 
 層與層之間只靠網路協定溝通,不互相嵌入。
 
+## 原則(使用者明確要求)
+
+**架構乾淨、效能、安全、高擴展性。不急著看成果,根基要打穩。**
+
+- 擴展點只開在已知會變的地方(provider、middleware、儲存後端),用 trait 劃邊界;
+  不為假想需求預先抽象。
+- 外部輸入(API 回應、SSE、tool 參數、使用者請求)一律當不可信:驗證、設上限、fail-closed。
+- 密鑰不進 log、不進 `Debug` 輸出;`#![forbid(unsafe_code)]` 為預設。
+- 效能主張要有 benchmark 數字撐,不憑感覺。
+
+## 測試策略
+
+| 層 | 工具 | 測什麼 | 何時跑 |
+|---|---|---|---|
+| 單元 | `#[cfg(test)]` | 純邏輯:wire ↔ domain 翻譯、SSE parser、錯誤分類 | 每次 |
+| Snapshot | `insta` | 送出的 request JSON 不意外變動 | 每次 |
+| Property / Fuzz | `proptest`、`cargo-fuzz` | parser 遇到任意輸入不 panic | 每次 / 手動 |
+| 整合 | `tests/` + `wiremock` | adapter 走真 HTTP:streaming、timeout、429/5xx | 每次 |
+| Live | `#[ignore]` | 打真 API,驗證對方格式沒變 | 手動 `-- --ignored` |
+| E2E | 起真 server(隨機 port) | client → gateway → fake provider 全鏈路 | 每次 |
+| Benchmark | `criterion` | 熱路徑效能,有數字才談優化 | 手動 |
+
+- Mock 網路邊界,不 mock parser(沿用 Go 專案原則)。
+- 工具在第一次需要時才加,不預先全裝。
+- **Eval 不是測試**:測試是確定性的 pass/fail;eval 是對資料集打分、看趨勢。
+  Eval 放獨立 crate,CI 只跑小型 smoke set,完整 eval 手動跑並保存結果。
+- CI(GitHub Actions):`fmt`、`clippy -D warnings`、`test`、`cargo deny`(供應鏈與授權)。
+
 ## 學習模式(使用者明確要求)
 
 使用者會讀程式(Java、Go 背景),但寫 Rust 慢。目標是學 **Rust 語法/慣用法** 與 **架構設計**。
