@@ -26,3 +26,8 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 indexing_slicing = "deny"
+
+# 共用的依賴版本。成員用 `serde.workspace = true` 引用,版本只在這裡管一次。
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
