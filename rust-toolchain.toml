@@ -1,0 +1,5 @@
+# 鎖定 Rust 版本:本機、CI、雲端 session 都用同一版,lint 結果才會一致。
+# rustup 讀到這個檔案會自動安裝對應版本。
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]

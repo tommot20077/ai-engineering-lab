@@ -4,8 +4,9 @@
 
 ## 目前位置
 
-- **模組**:001 LLM Gateway — 設計中(尚未寫任何程式)
-- **下一步**:使用者審 `docs/modules/001-llm-gateway/design.md` 的 §4~§9 提案;通過後從 §9 第 1 步開始實作
+- **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
+- **進度**:§9 第 1 步(workspace、`crates/llm` 骨架、lint、CI)完成
+- **下一步**:§9 第 2 步 — `types.rs`、`stop.rs`(struct、enum、derive、serde)
 - **最後更新**:2026-10-24
 
 ## 決策
@@ -23,12 +24,13 @@
 | D-009 | Provider trait streaming-first:核心是 `stream()`,`complete()` 為收集 stream 的預設方法;事件 enum 自己定義為中立格式;不支援 streaming 的 provider 把整份回應包成一批事件 | 單一資料路徑;可中途截斷;首字延遲低。Embedding/Rerank 另立 trait(介面隔離) | 2026-10-24 |
 | D-010 | 事件 enum = 語意事件 + index,參考 Vercel AI SDK:每種段落(文字/思考/工具)都有 start/delta/end;每個事件可帶 opaque provider metadata;StopReason 同時保留 unified 與 raw;錯誤是串流中的一種事件 | 使用者端最好用、各家好翻譯;opaque 欄位保住必須原樣回傳的資料(如 thinking 簽章) | 2026-10-24 |
 | D-011 | 對外格式與內部格式分離:之後在 gateway **額外開**一個 OpenAI 相容端點(與自家原生 API 並存,不是取代),做成「對外 adapter」(中立事件 → OpenAI chunk),`llm` crate 不動 | Ports & Adapters;內部保留完整資訊,對外相容現成 client | 2026-10-24 |
+| D-012 | 授權 MIT;程式碼註解一律中文 | 使用者選擇;中文註解方便學習 | 2026-10-24 |
 
 ## 模組
 
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
-| 001 | LLM Gateway | Rust 服務 | 設計中 |
+| 001 | LLM Gateway | Rust 服務 | 實作中(1/9) |
 | 002 | Eval Harness | Rust 服務 | — |
 | 003 | Agent + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25/HNSW 從零)+ 進階 RAG | Rust 服務 | — 待使用者提供 common RAG |

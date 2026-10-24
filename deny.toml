@@ -1,0 +1,22 @@
+# cargo-deny:檢查依賴的供應鏈安全(CLAUDE.md「測試策略」)。
+
+[advisories]
+# 依賴有已知漏洞(RustSec 資料庫)就失敗。
+yanked = "deny"
+
+[licenses]
+# 只接受寬鬆授權;出現 GPL 之類會失敗,避免授權污染。
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "BSD-3-Clause", "ISC"]
+
+[bans]
+# 同一個套件被拉進多個版本時提醒(會讓編譯變慢、執行檔變大)。
+multiple-versions = "warn"
+
+[sources]
+# 只能從 crates.io 下載,不准來路不明的 git repo 或 registry。
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[licenses.private]
+# 自己的 crate 設了 publish = false,不檢查它們本身的授權。
+ignore = true

@@ -1,0 +1,5 @@
+# Cargo.toml 禁止了會 panic 的寫法;測試裡放寬,因為測試失敗本來就該 panic。
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

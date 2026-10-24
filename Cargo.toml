@@ -1,6 +1,28 @@
-[package]
-name = "ai-engineering-lab"
+# 根目錄是「虛擬 workspace」:只有 [workspace],沒有 [package]。
+# 它本身不是一個 crate,只負責把 crates/ 底下的成員綁在一起,
+# 讓它們共用同一份 Cargo.lock、同一個 target/、同一套設定。
+# Go 對照:很像 go.work 把多個 module 綁在一起;Java 對照:Maven 的 parent pom。
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+# 成員用 `version.workspace = true` 繼承這裡的值,不必每個 crate 各寫一份。
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/tommot20077/ai-engineering-lab"
+publish = false
 
-[dependencies]
+# 共用的 lint 規則。成員用 `[lints] workspace = true` 套用。
+[workspace.lints.rust]
+# 整個專案禁止 unsafe。forbid 比 deny 更嚴:連在程式碼裡寫 #[allow] 都不能解除。
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# 這四條會 panic,外部輸入的處理路徑上一律禁止(design.md §7)。
+# 測試裡可以用,見 clippy.toml。
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
