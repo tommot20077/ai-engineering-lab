@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "ai-fundamentals"
+name = "ai-engineering-lab"
 version = "0.1.0"
