@@ -41,8 +41,8 @@
 ## 目前位置
 
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
-- **進度**:§9 第 1~5 步完成(骨架+CI;中立型別與遮罩 Debug;錯誤與可重試分類;串流事件與累加器;SSE 解析器)
-- **下一步**:§9 第 6 步 — `anthropic/wire.rs` + `translate.rs`(serde tagged enum、`pub(crate)`;insta)
+- **進度**:§9 第 1~6 步完成(骨架+CI;中立型別;錯誤分類;串流事件與累加器;SSE 解析器;Anthropic 翻譯層)
+- **下一步**:§9 第 7 步 — `provider.rs` + `anthropic/client.rs`(async、`reqwest`、`BoxStream`、`secrecy`、`Limits`;wiremock)
 - **最後更新**:2026-10-24
 
 ## 決策
@@ -64,6 +64,7 @@
 | D-013 | 定位:學習專案、不發布 crates.io,但成果公開分享;每個模組做到「完整」(見 CLAUDE.md 完成的定義);主題不限於 RAG | 使用者希望過程完整、別人能看能用,但不要搞得太複雜 | 2026-10-24 |
 | D-014 | 北極星 = 三階段同一系統:個人助理 → 資料飛輪 → RL;每階段有可量化的完成條件 | 後一階段需要前一階段的產出(真實紀錄、學徒模型);使用者要有難度、根基優先 | 2026-10-24 |
 | D-015 | 每一步通過 fmt、clippy、測試、私有資料掃描後,Claude 自動 commit + push,再給導讀 | 使用者重視流程順暢;只在設計決策時參與 | 2026-10-24 |
+| D-016 | 常數放在使用它的 module;第 7 步加 `Limits` struct 經 constructor 注入;設定檔(`gateway.toml`)只由 gateway binary 讀,library 不讀檔案也不讀環境變數 | 常數跟著用途走;設定由 composition root 決定,library 才可測試、沒有隱藏行為 | 2026-10-24 |
 
 ## 模組
 
@@ -71,7 +72,7 @@
 
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
-| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 實作中(5/9) |
+| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 實作中(6/9) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | — |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |

@@ -30,8 +30,10 @@ indexing_slicing = "deny"
 # 共用的依賴版本。成員用 `serde.workspace = true` 引用,版本只在這裡管一次。
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# raw_value:可以只「驗證」JSON 而不把它解析成一整棵樹(工具參數用,見 anthropic/translate.rs)。
+serde_json = { version = "1", features = ["raw_value"] }
 thiserror = "2"
 
 # 只在測試用的依賴。
 proptest = "1"
+insta = { version = "1", features = ["json"] }

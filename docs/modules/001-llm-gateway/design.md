@@ -163,6 +163,11 @@ impl LlmError { pub fn is_retryable(&self) -> bool }
 - **取消 = drop**:丟掉 stream 就會中止 HTTP 請求。Rust 不需要 Go 那種 `context.Context`。
 - Anthropic adapter 預設帶 `fallbacks: "default"`(beta `server-side-fallback-2026-07-01`),
   遇到 refusal 時由 API 端自動改用其他模型;可以透過 `provider_options` 關掉。
+- Anthropic 翻譯(第 6 步):`provider_options["anthropic"]` 的欄位攤平進請求 body,但不准覆蓋核心欄位
+  (`model`、`messages` 等,違反回 `InvalidRequest`);值為 `null` 表示拿掉該欄位。
+  沒有 Anthropic 簽章的 thinking 不送;工具參數必須是 JSON 物件(用 `RawValue` 驗證、不重新編碼)。
+  收回時:未知的事件類型忽略(Anthropic 的版本政策),未知的內容區塊與 delta 類型回 `Protocol`;
+  串流中的 `error` 事件依類型對應到 HTTP 狀態碼,沿用同一套可重試規則;refusal 的 `stop_details` 放進 `Finish` 的 meta。
 
 ## 9. 提案:實作順序(一個 commit 教一個概念)
 

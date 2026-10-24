@@ -1,0 +1,73 @@
+---
+source: crates/llm/src/anthropic/translate.rs
+assertion_line: 441
+expression: wire
+---
+{
+  "fallbacks": "default",
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "Read a.toml",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "signature": "sig-abc",
+          "thinking": "",
+          "type": "thinking"
+        },
+        {
+          "text": "Reading it.",
+          "type": "text"
+        },
+        {
+          "id": "toolu_1",
+          "input": {
+            "path": "a.toml"
+          },
+          "name": "read_file",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": "not found",
+          "is_error": true,
+          "tool_use_id": "toolu_1",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5-5",
+  "output_config": {
+    "effort": "low"
+  },
+  "stream": true,
+  "system": "You are terse.",
+  "tools": [
+    {
+      "description": "Read a file",
+      "input_schema": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "read_file"
+    }
+  ]
+}
