@@ -30,11 +30,19 @@
 | 2 | MLX LoRA:1.5~3B 舒適;7~8B QLoRA 吃緊但可行;14B 以上要租雲端。上線小模型用 MLX-LM / llama.cpp(vLLM 只支援 NVIDIA) | 大多 Mac 可做;學徒模型以 1.5~3B 為主 |
 | 3 | RL 運算量是微調的好幾倍:0.5~1.5B 需 24 GB 級 NVIDIA GPU;7B 需 80 GB 級 | 租雲端 GPU;先用小模型跑通流程再放大 |
 
+**雲端選項**(2026-10 查詢,多為第三方資料,用之前再確認):
+
+- **build.nvidia.com(NIM API)**:只有推論 API,沒有訓練算力。免費額度以速率限制(約 40 RPM)計,
+  條款限定開發測試用。用途:OpenAI 相容的第二個 provider、免費試用開源模型當學徒候選或評審。
+- **Google Colab**:免費版 T4(16 GB)、連線不保證、閒置會斷;Pro 約 $9.99 / 100 compute units
+  (A100 約 15 CU/小時)。適合階段 2 的 CUDA 實驗與階段 3 的小規模 RL;要把 checkpoint 存到雲端硬碟。
+- **長時間或大模型訓練**:租專用 GPU(按小時計費)。
+
 ## 目前位置
 
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
-- **進度**:§9 第 1、2 步完成(骨架+CI;中立型別 `types.rs`、`stop.rs`,含遮罩 Debug)
-- **下一步**:§9 第 3 步 — `error.rs`(帶資料的 enum、`thiserror`、`Result`、`?`)
+- **進度**:§9 第 1~3 步完成(骨架+CI;中立型別與遮罩 Debug;錯誤型別與可重試分類)
+- **下一步**:§9 第 4 步 — `event.rs` + `accumulate.rs`(match、ownership、`Vec`、狀態機)
 - **最後更新**:2026-10-24
 
 ## 決策
@@ -62,7 +70,7 @@
 
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
-| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 實作中(2/9) |
+| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 實作中(3/9) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | — |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |

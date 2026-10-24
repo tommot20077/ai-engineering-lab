@@ -63,7 +63,8 @@ Python 模型層  微調 · embedding/reranker · 推論服務 → 以 HTTP/gRPC
 - **Claude 寫、使用者讀。** 一個 commit 只教一個概念,約 100~200 行。`git log` 本身就是教材。
 - **架構由使用者決定。** 遇到設計分岔,先列 2~3 個方案與取捨,等使用者選,再寫。
 - **程式碼註解一律用中文**(D-012)。
-- **註解寫 Rust 特有的東西**,盡量對照 Go/Java(例:「這裡要 `Arc`,因為 Go 有 GC、Rust 沒有」)。
+- **註解寫 Rust 特有的東西**,**優先對照 Java**(使用者最熟,含 Java 21 的 sealed、record、
+  pattern matching switch);Go 只在明顯更貼切時才用。例:「這裡要 `Arc`,因為 Java 有 GC、Rust 沒有」。
   業務邏輯註解保持精簡,不要寫得比程式長。
 - **每步附導讀**:看哪幾行、為什麼這樣寫、Go 會怎麼寫。
 - **可選小練習**(5~15 分鐘):讓使用者改一點東西、跟著 compiler 錯誤走。

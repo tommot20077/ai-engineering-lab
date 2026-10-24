@@ -14,8 +14,10 @@
 // 再用 `pub use` 把要公開的型別拉到 crate 最上層,外面寫 `llm::Request` 就好。
 // 好處:檔案怎麼拆是內部細節,之後搬動檔案不會影響使用者。
 // Go 對照:Go 的 package 路徑就是目錄,搬目錄就是 breaking change;Rust 把兩者分開了。
+mod error;
 mod stop;
 mod types;
 
+pub use error::{LlmError, Result};
 pub use stop::{StopKind, StopReason};
 pub use types::{Content, Message, ProviderMetadata, Request, Response, Role, ToolDef, Usage};

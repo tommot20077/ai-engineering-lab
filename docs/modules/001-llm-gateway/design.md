@@ -102,7 +102,6 @@ pub struct ProviderMetadata(BTreeMap<String, serde_json::Value>);  // 以 provid
 ## 5. 提案:錯誤與可重試分類
 
 ```rust
-#[non_exhaustive]
 pub enum LlmError {
     Http { status: u16, retry_after: Option<Duration>, body: String },  // body 截斷到 4 KiB
     Transport(String),              // 連線/DNS/TLS;不外洩 reqwest 型別
@@ -113,6 +112,10 @@ pub enum LlmError {
 }
 impl LlmError { pub fn is_retryable(&self) -> bool }
 ```
+
+- 不加 `#[non_exhaustive]`:專案不發布(D-013),讓 workspace 內的 `match` 保持窮舉檢查。
+- `Display` 只印狀態碼,不印 body(body 可能夾帶使用者輸入)。
+- `impl From<serde_json::Error>` → `Protocol`,讓 `?` 能直接轉換。
 
 | 可重試 | 不可重試 |
 |---|---|
