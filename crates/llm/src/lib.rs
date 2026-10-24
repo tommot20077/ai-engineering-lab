@@ -17,11 +17,13 @@
 mod accumulate;
 mod error;
 mod event;
+mod sse;
 mod stop;
 mod types;
 
 pub use accumulate::Accumulator;
 pub use error::{LlmError, Result};
 pub use event::StreamEvent;
+pub use sse::{SseEvent, SseParser};
 pub use stop::{StopKind, StopReason};
 pub use types::{Content, Message, ProviderMetadata, Request, Response, Role, ToolDef, Usage};

@@ -140,17 +140,19 @@ impl Accumulator {
                     Ok(())
                 }
                 // 錯誤訊息直接用事件的 Debug:它已經遮罩過內容,可以安全地放進錯誤裡。
-                other => Err(protocol(format!("{other:?} before message_start"))),
+                other => Err(LlmError::protocol(format!(
+                    "{other:?} before message_start"
+                ))),
             },
             Phase::Streaming => self.on_streaming(event),
-            Phase::Finished => Err(protocol(format!("{event:?} after finish"))),
+            Phase::Finished => Err(LlmError::protocol(format!("{event:?} after finish"))),
         }
     }
 
     fn on_streaming(&mut self, event: StreamEvent) -> Result<()> {
         use StreamEvent as E;
         match event {
-            E::MessageStart { .. } => Err(protocol("duplicate message_start")),
+            E::MessageStart { .. } => Err(LlmError::protocol("duplicate message_start")),
 
             E::TextStart { index, meta } => self.open(index, Body::Text(String::new()), meta),
             E::ThinkingStart { index, meta } => {
@@ -184,7 +186,9 @@ impl Accumulator {
             E::Finish { stop, usage, meta } => {
                 // `find` 回傳第一個符合條件的元素(Option),等於 Java Stream 的 `filter(...).findFirst()`。
                 if let Some((index, _)) = self.blocks.iter().find(|(_, b)| b.open) {
-                    return Err(protocol(format!("block {index} still open at finish")));
+                    return Err(LlmError::protocol(format!(
+                        "block {index} still open at finish"
+                    )));
                 }
                 self.finished = Some(Finished { stop, usage, meta });
                 self.phase = Phase::Finished;
@@ -195,7 +199,7 @@ impl Accumulator {
 
     fn open(&mut self, index: usize, body: Body, meta: ProviderMetadata) -> Result<()> {
         if self.blocks.contains_key(&index) {
-            return Err(protocol(format!("block {index} started twice")));
+            return Err(LlmError::protocol(format!("block {index} started twice")));
         }
         self.blocks.insert(
             index,
@@ -212,7 +216,7 @@ impl Accumulator {
         // `saturating_add`:加到上限就停在上限,不會溢位。這裡的數字來自外部輸入,不能假設它很小。
         let total = self.bytes.saturating_add(piece.len());
         if total > self.max_bytes {
-            return Err(protocol(format!(
+            return Err(LlmError::protocol(format!(
                 "response exceeds {} bytes",
                 self.max_bytes
             )));
@@ -240,16 +244,17 @@ impl Accumulator {
     // Java 裡回傳物件參考,呼叫者想改就改;Rust 裡「可以改」必須寫進型別(`&mut`)。
     fn open_block(&mut self, index: usize, kind: Kind) -> Result<&mut Block> {
         // `ok_or_else` 把 `Option`(有或沒有)轉成 `Result`(成功或錯誤),再用 `?` 往外傳。
-        let block = self
-            .blocks
-            .get_mut(&index)
-            .ok_or_else(|| protocol(format!("{kind:?} event for unknown block {index}")))?;
+        let block = self.blocks.get_mut(&index).ok_or_else(|| {
+            LlmError::protocol(format!("{kind:?} event for unknown block {index}"))
+        })?;
         if !block.open {
-            return Err(protocol(format!("{kind:?} event for closed block {index}")));
+            return Err(LlmError::protocol(format!(
+                "{kind:?} event for closed block {index}"
+            )));
         }
         if block.body.kind() != kind {
             let actual = block.body.kind();
-            return Err(protocol(format!(
+            return Err(LlmError::protocol(format!(
                 "{kind:?} event for {actual:?} block {index}"
             )));
         }
@@ -262,7 +267,7 @@ impl Accumulator {
     pub fn finish(self) -> Result<Response> {
         // `let ... else`:模式不符合就執行 else(而且 else 必須離開函式)。
         let Some(finished) = self.finished else {
-            return Err(protocol("stream ended before finish"));
+            return Err(LlmError::protocol("stream ended before finish"));
         };
         let content = self.blocks.into_values().map(Block::into_content).collect();
         Ok(Response {
@@ -274,10 +279,6 @@ impl Accumulator {
             meta: finished.meta,
         })
     }
-}
-
-fn protocol(message: impl Into<String>) -> LlmError {
-    LlmError::Protocol(message.into())
 }
 
 #[cfg(test)]

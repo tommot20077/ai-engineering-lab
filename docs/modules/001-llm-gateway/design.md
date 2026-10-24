@@ -152,6 +152,8 @@ impl LlmError { pub fn is_retryable(&self) -> bool }
 - **Canary 測試**:用一把假 key `sk-ant-CANARY-…` 跑完整流程,斷言它沒出現在任何
   log、錯誤訊息、`Debug` 輸出裡。
 - TLS 用 `rustls`,不用 OpenSSL。
+- SSE 解析(第 5 步):照 WHATWG 規格;不合法的 UTF-8 回 `Protocol`(不做替換字元);
+  忽略 `id` 與 `retry`(LLM API 不支援斷點續傳);單一事件上限同時計入「還沒換行的那一行」與已累積的 data。
 
 ## 8. 提案:效能與執行期
 

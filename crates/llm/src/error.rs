@@ -65,6 +65,11 @@ impl LlmError {
         }
     }
 
+    /// 建立 `Protocol` 錯誤。`impl Into<String>`:傳 `&str` 或 `String`(例如 `format!` 的結果)都可以。
+    pub fn protocol(message: impl Into<String>) -> Self {
+        Self::Protocol(message.into())
+    }
+
     /// 這個錯誤值得重試嗎?之後的 retry middleware 只看這個答案。
     pub fn is_retryable(&self) -> bool {
         // 沒有 `_ =>` 萬用分支:以後加新的 variant,compiler 會逼我們在這裡決定它能不能重試。
