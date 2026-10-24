@@ -5,7 +5,7 @@
 ## 目前位置
 
 - **模組**:001 LLM Gateway — 設計中(尚未寫任何程式)
-- **下一步**:寫 `docs/modules/001-llm-gateway/design.md`,彙整 D-006~D-011,並對剩下的項目(錯誤型別與重試分類、串流中途失敗語意、密鑰處理、執行期 dispatch、Request/Message 型別)提出預設方案給使用者審
+- **下一步**:使用者審 `docs/modules/001-llm-gateway/design.md` 的 §4~§9 提案;通過後從 §9 第 1 步開始實作
 - **最後更新**:2026-10-24
 
 ## 決策
