@@ -7,6 +7,15 @@
 **每次開新 session,先讀 [`docs/ROADMAP.md`](docs/ROADMAP.md)** — 目前進度、已做決策、
 待辦都在那裡。完成一步就更新它。
 
+**定位(D-013)**:這是學習專案,不發布到 crates.io;但成果公開分享,所以每個模組都要做「完整」—
+別人 clone 下來看得懂、跑得起來。RAG 是主題之一,不是唯一。
+
+**完成的定義**(每個模組都要有):`design.md` → 實作 + 測試 → crate 的 `README.md`
+(做什麼、怎麼跑、怎麼用)+ 可執行的 `examples/` → CI 綠燈 → `retro.md`。
+
+**私有資料**:使用者本機有私有參考資料,記在 `CLAUDE.local.md`(已 gitignore)。
+那裡的內容一律不准寫進 repo、commit 訊息、PR 或 issue。
+
 ## 三層架構(目標)
 
 ```
@@ -23,7 +32,9 @@ Python 模型層  微調 · embedding/reranker · 推論服務 → 以 HTTP/gRPC
 
 - 擴展點只開在已知會變的地方(provider、middleware、儲存後端),用 trait 劃邊界;
   不為假想需求預先抽象。
-- 外部輸入(API 回應、SSE、tool 參數、使用者請求)一律當不可信:驗證、設上限、fail-closed。
+- 外部輸入(API 回應、SSE、tool 參數、使用者請求)一律當不可信:驗證、設上限。
+- **失敗姿態看後果**:讀取路徑 fail-closed(條件不明就回空,不回全部);
+  寫入路徑 fail-loud(不合法就立刻報錯,不要污染已存的資料)。
 - 密鑰不進 log、不進 `Debug` 輸出;`#![forbid(unsafe_code)]` 為預設。
 - 效能主張要有 benchmark 數字撐,不憑感覺。
 

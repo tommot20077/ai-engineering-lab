@@ -6,3 +6,6 @@
 
 # secrets
 .env
+
+# 本機私有筆記,不進 git
+CLAUDE.local.md
