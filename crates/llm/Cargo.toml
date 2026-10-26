@@ -24,3 +24,4 @@ proptest.workspace = true
 insta.workspace = true
 tokio.workspace = true
 wiremock.workspace = true
+dotenvy.workspace = true

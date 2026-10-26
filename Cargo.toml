@@ -46,3 +46,5 @@ proptest = "1"
 insta = { version = "1", features = ["json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
+# 讀 .env 檔。只給 examples 和測試用:library 本身不讀檔案也不讀環境變數(D-016)。
+dotenvy = "0.15"
