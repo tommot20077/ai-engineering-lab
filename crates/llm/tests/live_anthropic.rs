@@ -5,6 +5,8 @@
 //! ```text
 //! cargo test -p llm --test live_anthropic -- --ignored
 //! ```
+//!
+//! 預設模型是 `claude-haiku-5-5`,可以用 `LIVE_MODEL` 環境變數(或 .env)換成別的模型。
 
 #![allow(
     clippy::unwrap_used,
@@ -18,6 +20,8 @@ use llm::{
     Role, SecretString, StopKind,
 };
 use serde_json::json;
+
+const DEFAULT_LIVE_MODEL: &str = "claude-haiku-5-5";
 
 fn client() -> AnthropicClient {
     dotenvy::dotenv().ok();
@@ -41,7 +45,9 @@ fn request(messages: Vec<Message>) -> Request {
     let mut options = ProviderMetadata::default();
     options.insert("anthropic", json!({ "output_config": { "effort": "low" } }));
     Request {
-        model: "claude-sonnet-5-5".into(),
+        // 預設用 Haiku:live test 只確認格式,用哪個模型驗證到的都一樣,Haiku 便宜 20 倍。
+        // 要用別的模型驗證時:LIVE_MODEL=claude-sonnet-5-5 cargo test ... -- --ignored
+        model: std::env::var("LIVE_MODEL").unwrap_or_else(|_| DEFAULT_LIVE_MODEL.to_owned()),
         system: Some("Answer as briefly as possible.".into()),
         messages,
         tools: vec![],
