@@ -42,7 +42,7 @@
 
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
 - **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
-- **下一步**:寫 001 第一部分(`crates/llm`)的 `retro.md`,再設計 001 第二部分 `crates/gateway`(axum、呼叫紀錄、模型別名)
+- **下一步**:設計 001 第二部分 `crates/gateway`(axum、呼叫紀錄、模型別名);第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-24
 
 ## 決策
