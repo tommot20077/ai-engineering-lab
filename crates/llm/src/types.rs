@@ -6,6 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::error::{LlmError, Result};
 use crate::stop::StopReason;
 
 /// 送給模型的一次請求。
@@ -26,6 +27,26 @@ pub struct Request {
     /// 各家專屬的設定(effort、thinking 顯示方式等),核心型別不認識它們。
     #[serde(default, skip_serializing_if = "ProviderMetadata::is_empty")]
     pub provider_options: ProviderMetadata,
+}
+
+impl Request {
+    /// 送出前的基本檢查,跟 provider 無關。不合法就立刻報錯,連網路都不碰(寫入路徑 fail-loud)。
+    pub fn validate(&self) -> Result<()> {
+        if self.model.trim().is_empty() {
+            return Err(LlmError::InvalidRequest("model must not be empty".into()));
+        }
+        if self.max_tokens == 0 {
+            return Err(LlmError::InvalidRequest(
+                "max_tokens must be at least 1".into(),
+            ));
+        }
+        if self.messages.is_empty() {
+            return Err(LlmError::InvalidRequest(
+                "messages must not be empty".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// 誰說的話。

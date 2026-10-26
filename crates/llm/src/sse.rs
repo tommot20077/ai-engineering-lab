@@ -16,7 +16,7 @@ use std::fmt;
 use crate::error::{LlmError, Result};
 
 /// 單一事件最多多少 bytes(design.md §7)。惡意或壞掉的串流可能永遠不送換行,不能無限累積。
-const MAX_EVENT_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_EVENT_BYTES: usize = 1024 * 1024;
 
 /// UTF-8 的 BOM。有些伺服器會在串流最開頭送它,規格要求忽略。
 const BOM: &[u8] = b"\xEF\xBB\xBF";

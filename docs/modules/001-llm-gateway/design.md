@@ -130,8 +130,10 @@ impl LlmError { pub fn is_retryable(&self) -> bool }
 
 - adapter **一次請求只打一次**,不自己重試。重試是之後的 middleware 的事(單一職責)。
 - 還沒送出任何內容事件就失敗 → 回傳一般錯誤,呼叫者可以安全重試。
-- 已經送出內容才失敗 → `complete()` 回傳 `Interrupted { partial }`,不可以偷偷重試
-  (內容已經給使用者看過了)。
+- 已經送出內容才失敗 → `complete()` 回傳 `Interrupted { partial, cause }`,不可以偷偷重試
+  (內容已經給使用者看過了)。`cause` 保留斷線原因(實作第 7 步時補上)。
+  串流正常結束卻沒有 `Finish`,也算中途斷線。「已輸出」指 delta 與工具呼叫開始;
+  只有 text/thinking 的 start 事件不算。
 
 ## 7. 提案:安全
 
@@ -161,6 +163,9 @@ impl LlmError { pub fn is_retryable(&self) -> bool }
 - 回傳 `BoxStream` 而不是 `impl Stream`:Gateway 要在執行期用 `Arc<dyn LlmProvider>` 選 provider,
   `dyn` 需要裝箱。每次請求多一次 heap 配置,跟網路延遲相比可以忽略(benchmark 驗證)。
 - **取消 = drop**:丟掉 stream 就會中止 HTTP 請求。Rust 不需要 Go 那種 `context.Context`。
+- 逾時(第 7 步):只設連線逾時與「兩次收到資料之間」的閒置逾時,不設總時間(長回答串流幾分鐘是正常的)。
+  2xx 但 content-type 不是 `text/event-stream` → `Protocol`;錯誤 body 最多讀 4 KiB。
+  `Limits`(單一事件、整則回覆的上限)由 `AnthropicConfig` 傳入(D-016)。
 - Anthropic adapter 預設帶 `fallbacks: "default"`(beta `server-side-fallback-2026-07-01`),
   遇到 refusal 時由 API 端自動改用其他模型;可以透過 `provider_options` 關掉。
 - Anthropic 翻譯(第 6 步):`provider_options["anthropic"]` 的欄位攤平進請求 body,但不准覆蓋核心欄位

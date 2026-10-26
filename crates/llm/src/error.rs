@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::types::Response;
 
 /// 錯誤 body 最多保留多少 bytes。provider 回的錯誤頁可能很大,全部留著會吃記憶體、灌爆 log。
-const MAX_ERROR_BODY_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_ERROR_BODY_BYTES: usize = 4 * 1024;
 
 /// 這個 crate 的 `Result`:錯誤型別固定是 `LlmError`,寫 `Result<T>` 就好。
 // `type` 是型別別名,等於 Go 的 `type X = Y`。std 的 io、fmt 也都這樣做。
@@ -43,11 +43,17 @@ pub enum LlmError {
     #[error("malformed response from provider: {0}")]
     Protocol(String),
 
-    /// 已經輸出過內容之後才斷線。`partial` 是斷線前收到的部分。
+    /// 已經輸出過內容之後才斷線。`partial` 是斷線前收到的部分,`cause` 是斷線的原因。
     // `Box` 把 `Response` 放到 heap 上。enum 的大小取決於最大的 variant,
     // 不裝箱的話,每個 `LlmError` 都會和 `Response` 一樣大,即使是小小的 `Timeout`。
+    // `#[source]`:標記「造成這個錯誤的錯誤」。log 和錯誤報告可以沿著 source 一路往下印,
+    // 等於 Java 的 `new RuntimeException("...", cause)`。
     #[error("stream interrupted after output was produced")]
-    Interrupted { partial: Box<Response> },
+    Interrupted {
+        partial: Box<Response>,
+        #[source]
+        cause: Box<LlmError>,
+    },
 
     /// 送出前的自我檢查沒過,例如 `max_tokens` 是 0。
     #[error("invalid request: {0}")]

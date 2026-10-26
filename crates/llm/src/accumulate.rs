@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 
 use crate::error::{LlmError, Result};
 use crate::event::StreamEvent;
-use crate::stop::StopReason;
+use crate::stop::{StopKind, StopReason};
 use crate::types::{Content, ProviderMetadata, Response, Usage};
 
 /// 一則回覆最多累積多少 bytes 的內容(design.md §7),防止記憶體被灌爆。
-const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 /// 一次餵一個事件,最後呼叫 `finish` 取得完整回應。
 ///
@@ -259,6 +259,26 @@ impl Accumulator {
             )));
         }
         Ok(block)
+    }
+
+    /// 是否已經收到 `Finish`。
+    pub(crate) fn is_finished(&self) -> bool {
+        self.phase == Phase::Finished
+    }
+
+    /// 串流中途斷掉時,把目前收到的部分組成一份不完整的回應(包含還沒結束的區塊)。
+    pub(crate) fn into_partial(self) -> Response {
+        Response {
+            id: self.id,
+            model: self.model,
+            content: self.blocks.into_values().map(Block::into_content).collect(),
+            stop: StopReason {
+                kind: StopKind::Unknown,
+                raw: "interrupted".into(),
+            },
+            usage: Usage::default(),
+            meta: ProviderMetadata::default(),
+        }
     }
 
     /// 串流結束,取出完整回應。

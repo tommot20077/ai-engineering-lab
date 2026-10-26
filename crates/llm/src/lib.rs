@@ -15,19 +15,24 @@
 // 好處:檔案怎麼拆是內部細節,之後搬動檔案不會影響使用者。
 // Go 對照:Go 的 package 路徑就是目錄,搬目錄就是 breaking change;Rust 把兩者分開了。
 mod accumulate;
-// 第 6 步只有翻譯邏輯,還沒有任何地方呼叫它(第 7 步的 HTTP client 才會用到),
-// 所以暫時關掉 dead code 警告。第 7 步接上之後要拿掉這一行。
-#[allow(dead_code)]
 mod anthropic;
 mod error;
 mod event;
+mod limits;
+mod provider;
 mod sse;
 mod stop;
 mod types;
 
 pub use accumulate::Accumulator;
+pub use anthropic::{AnthropicClient, AnthropicConfig, DEFAULT_BASE_URL};
 pub use error::{LlmError, Result};
 pub use event::StreamEvent;
+pub use limits::Limits;
+pub use provider::{EventStream, LlmProvider, collect};
 pub use sse::{SseEvent, SseParser};
 pub use stop::{StopKind, StopReason};
 pub use types::{Content, Message, ProviderMetadata, Request, Response, Role, ToolDef, Usage};
+
+// 讓使用者不必自己加 secrecy 依賴,就能建立 API key。
+pub use secrecy::SecretString;

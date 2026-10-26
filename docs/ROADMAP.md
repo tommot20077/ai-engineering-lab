@@ -41,8 +41,8 @@
 ## 目前位置
 
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
-- **進度**:§9 第 1~6 步完成(骨架+CI;中立型別;錯誤分類;串流事件與累加器;SSE 解析器;Anthropic 翻譯層)
-- **下一步**:§9 第 7 步 — `provider.rs` + `anthropic/client.rs`(async、`reqwest`、`BoxStream`、`secrecy`、`Limits`;wiremock)
+- **進度**:§9 第 1~7 步完成(骨架+CI;中立型別;錯誤分類;串流事件與累加器;SSE 解析器;Anthropic 翻譯層;provider trait 與 HTTP client)
+- **下一步**:§9 第 8 步 — `examples/chat.rs` + live test(binary、環境變數、`#[ignore]`;第一次打真的 Claude)
 - **最後更新**:2026-10-24
 
 ## 決策
@@ -72,7 +72,7 @@
 
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
-| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 實作中(6/9) |
+| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 實作中(7/9) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | — |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |

@@ -33,7 +33,16 @@ serde = { version = "1", features = ["derive"] }
 # raw_value:可以只「驗證」JSON 而不把它解析成一整棵樹(工具參數用,見 anthropic/translate.rs)。
 serde_json = { version = "1", features = ["raw_value"] }
 thiserror = "2"
+# HTTP client。預設 TLS 是 rustls(加密實作 aws-lc-rs),並讀取作業系統的憑證庫。
+reqwest = { version = "0.13", features = ["stream"] }
+futures = "0.3"
+# 用 `yield` 寫 async stream,讀起來像一般的迴圈。
+async-stream = "0.3"
+# API key 的包裝型別:Debug 印 [REDACTED]、沒有 Display(design.md §7)。
+secrecy = "0.10"
 
 # 只在測試用的依賴。
 proptest = "1"
 insta = { version = "1", features = ["json"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

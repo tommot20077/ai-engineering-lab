@@ -6,7 +6,15 @@ yanked = "deny"
 
 [licenses]
 # 只接受寬鬆授權;出現 GPL 之類會失敗,避免授權污染。
-allow = ["MIT", "Apache-2.0", "Unicode-3.0", "BSD-3-Clause", "ISC"]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "BSD-3-Clause",
+    "ISC",
+    # 寬鬆的「資料」授權:webpki-root-certs 打包的 Mozilla 根憑證清單用這個(reqwest → rustls)。
+    "CDLA-Permissive-2.0",
+]
 
 [bans]
 # 同一個套件被拉進多個版本時提醒(會讓編譯變慢、執行檔變大)。
