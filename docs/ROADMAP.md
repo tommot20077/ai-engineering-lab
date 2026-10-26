@@ -41,8 +41,8 @@
 ## 目前位置
 
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
-- **進度**:§9 第 1~8 步完成;第一次打真的 Claude 成功(live test 兩輪對話、串流範例)
-- **下一步**:§9 第 9 步 — SSE benchmark(criterion);之後寫 001 第一部分的 retro,再設計 `crates/gateway`
+- **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
+- **下一步**:寫 001 第一部分(`crates/llm`)的 `retro.md`,再設計 001 第二部分 `crates/gateway`(axum、呼叫紀錄、模型別名)
 - **最後更新**:2026-10-24
 
 ## 決策
@@ -72,7 +72,7 @@
 
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
-| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 實作中(8/9) |
+| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 第一部分完成(9/9);gateway 待設計 |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | — |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |

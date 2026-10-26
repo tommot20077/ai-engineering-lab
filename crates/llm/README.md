@@ -73,3 +73,21 @@ cargo test -p llm --test live_anthropic -- --ignored # 打真的 API,需要 .env
 | Snapshot | `src/anthropic/snapshots/` | 送出的請求 body 不意外變動 |
 | 整合 | `tests/anthropic_http.rs` | 走真的 HTTP(wiremock):串流、429、401、逾時、中途斷線 |
 | Live | `tests/live_anthropic.rs` | 真的 Claude:兩輪對話、錯誤的 key |
+
+## 效能
+
+`cargo bench -p llm --bench sse`。量測環境:Apple M5 Pro,release build,2026-10-26。
+
+| 項目 | 輸入 | 時間 | 吞吐量 |
+|---|---|---|---|
+| SSE 解析,一次全部餵入 | 一則 1000 個 text_delta 的回答(約 137 KB) | 307 µs | 428 MiB/s |
+| SSE 解析,切成 1 KB | 同上 | 315 µs | 417 MiB/s |
+| SSE 解析,切成 16 bytes(最壞情況) | 同上 | 351 µs | 374 MiB/s |
+| 累加器 | 1000 個 `TextDelta` → `Response` | 12.5 µs | 80 M 事件/s |
+
+**結論:不需要優化。** 這樣一則回答,Claude 要花好幾秒才串流完,我們解析它只要 0.3 ms;
+就算網路把資料切成 16 bytes 的碎片,也只慢約 13%。換算下來,單一 CPU 核心的解析能力
+大約能應付上萬條同時進行的串流。逐 byte 處理的簡單寫法可以保留。
+
+尚未量測:Anthropic 事件的 JSON 解析(`anthropic/translate.rs`,不是公開 API),
+會在 gateway 的端到端 benchmark 一起量。

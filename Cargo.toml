@@ -48,3 +48,5 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
 # 讀 .env 檔。只給 examples 和測試用:library 本身不讀檔案也不讀環境變數(D-016)。
 dotenvy = "0.15"
+# benchmark。只開最基本的功能,不要畫圖和平行化,少拉很多依賴。
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }

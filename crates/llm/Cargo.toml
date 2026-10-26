@@ -25,3 +25,9 @@ insta.workspace = true
 tokio.workspace = true
 wiremock.workspace = true
 dotenvy.workspace = true
+criterion.workspace = true
+
+# `harness = false`:不用 Rust 內建的測試框架跑,改由 criterion 自己的 main 接手。
+[[bench]]
+name = "sse"
+harness = false
