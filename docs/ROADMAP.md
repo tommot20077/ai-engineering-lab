@@ -43,7 +43,7 @@
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
 - **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
 - **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
-  待決定:decorator 的型別寫法、包裝順序、紀錄格式與儲存介面、retry 參數、gateway 的 HTTP API、token 與設定檔。
+  待決定:包裝順序、紀錄格式與儲存介面、retry 參數、gateway 的 HTTP API、token 與設定檔。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
 
@@ -69,6 +69,7 @@
 | D-016 | 常數放在使用它的 module;第 7 步加 `Limits` struct 經 constructor 注入;設定檔(`gateway.toml`)只由 gateway binary 讀,library 不讀檔案也不讀環境變數 | 常數跟著用途走;設定由 composition root 決定,library 才可測試、沒有隱藏行為 | 2026-10-24 |
 | D-017 | 呼叫紀錄(給飛輪的資料)寫入時保留完整內容,只存本機、權限 600;個資遮蔽在匯出成訓練資料時才做;營運 log 與資料紀錄分開存放,營運 log 不含內容 | 寫入時遮蔽一旦規則寫錯就無法復原,被遮掉的內容也無法訓練;這是個人資料、存在自己的電腦上,用存取控制保護 | 2026-10-30 |
 | D-018 | Retry、Record、Alias 等 middleware 寫成 `LlmProvider` 的 decorator(每層都實作 `LlmProvider`、一層包一層),放在 `crates/llm` 裡用 module 分開;`crates/gateway` 只是 HTTP 外殼(HTTP ↔ `LlmProvider`、token 驗證、讀設定檔) | 直接引用 library 的 Rust 呼叫者也經過同一組 decorator,紀錄不會有缺口;之後 010 路由、011 灰度切換也只是再包一層 | 2026-10-31 |
+| D-019 | Decorator 用泛型 struct(`Retry<P>`),再加 blanket impl 讓 `Arc<T: LlmProvider + ?Sized>` 也是 provider;另提供 `with_xxx` extension trait 方便組裝 | 測試可用具體型別;gateway 可依設定檔在執行期組裝 `Arc<dyn LlmProvider>`;與 axum/tower 的 middleware 模式一致 | 2026-10-31 |
 
 ## 模組
 
