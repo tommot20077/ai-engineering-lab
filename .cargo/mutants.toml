@@ -1,0 +1,12 @@
+# cargo-mutants 的設定(D-027)。本機(lab-step 第 3 節)與每週排程(.github/workflows/mutants.yml)共用。
+#
+# 這裡只排除「已經說明過理由」的 mutant;每加一條都要寫為什麼,否則就是在藏測試缺口。
+# 比對的是 `cargo mutants --list` 印出的完整名稱(檔名:行:欄: 描述);寫成不含行號的形式,改程式不會失效。
+exclude_re = [
+    # 等價:關機時寫完紀錄、sync_data。只有在很窄的競爭窗口或斷電時才看得出差別,黑箱測試證明不了
+    # (001 retro 第二部分 §4 第 4 點;E2E 確認了「紀錄有寫入」,但寫檔執行緒通常早就寫完了)。
+    'replace Gateway::shutdown with \(\)',
+    # 不值得測:非串流請求的總時間上限是 10 * 60 秒,換成 10 + 60 只是常數變了。
+    # (`* with /` 會讓上限變成 0 秒,這個抓得到,不排除。)
+    'crates/gateway/src/api\.rs:\d+:\d+: replace \* with \+',
+]

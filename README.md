@@ -77,7 +77,7 @@ cargo run -p gateway --release    # 用法見 crates/gateway/README.md
 | | |
 |---|---|
 | 測試 | 單元、snapshot(`insta`)、property(`proptest`)、整合(`wiremock`)、E2E(真的執行 binary)、live(手動) |
-| Mutation | 每一步都故意把程式改壞,確認有測試會失敗(手寫 + `cargo-mutants`) |
+| Mutation | 每一步都故意把程式改壞,確認有測試會失敗(手寫 + `cargo-mutants`);每週再對整個 workspace 跑一次 |
 | 效能 | 只用 `criterion` 的數字談優化;結果寫在各 crate 的 README |
 | 安全 | `unsafe` 全面禁止;密鑰包在 `SecretString`,不進 log 與 `Debug`;外部輸入一律驗證、設上限 |
 | CI | `fmt`、`clippy -D warnings`(含全部 feature)、`test`、`cargo deny`(供應鏈與授權) |

@@ -43,7 +43,7 @@
 - **模組**:001 LLM Gateway — **完成**(2026-11-01)。設計 `design.md`、`design-part2.md`;回顧 `retro.md`(兩部分)。
   `crates/llm`(provider、decorator、紀錄)、`crates/config-loader`、`crates/gateway`(HTTP 服務,README 有用法)。
 - **下一步**:跟使用者決定下一個模組(依 ROADMAP 順序是 002 Eval Harness),先寫 design。
-  第二部分回顧帶出的兩件小事:repo 根目錄 README(完成)、cargo-mutants 每週排程(見待辦)。
+  第二部分回顧帶出的兩件小事都完成了:repo 根目錄 README、cargo-mutants 每週排程(`.github/workflows/mutants.yml`)。
 - **最後更新**:2026-11-01
 
 ## 決策
@@ -76,7 +76,7 @@
 | D-024 | gateway 強制使用 token:隨機固定 token(非 JWT)放 `.env` 的 `GATEWAY_TOKEN`、包 `SecretString`、固定時間比較(`subtle`)、沒設定就拒絕啟動;另檢查 `Host` header 擋 DNS rebinding、不開 CORS。設定檔用 TOML:`gateway.example.toml` 進 git、`gateway.toml` 不進;秘密只放 `.env`;`deny_unknown_fields` 與數值、目錄、bind 位址全部在啟動時檢查,非本機 bind 需明確 `allow_remote = true`;別名先放設定檔(改動頻率低),執行中可替換的表留到 011 | 本機連得到 ≠ 只有本人(瀏覽器、其他程式);單一使用者用 JWT 只增加金鑰與過期管理的風險;TOML 型別明確、是 Rust 慣例,YAML 有隱式型別陷阱且主流 serde 函式庫已封存;設定錯誤要在啟動時擋下 | 2026-10-31 |
 | D-025 | `/health` 公開(不檢查 token 與 Host、只回 ok),內部資訊移到需要 token 的 `/v1/status`;新增 `crates/config-loader` 給所有 binary 共用:只展開開頭 `~/`、不展開 `$VAR`、相對路徑以設定檔所在目錄為準、預設資料目錄、讀 TOML(錯誤含行號)、讀秘密環境變數成 `SecretString`;library 不依賴它 | 服務檢查帶不了 token,而 `/health` 不洩漏資訊也不花錢;002、005 也會讀設定檔,規則(特別是相對路徑)要一致 | 2026-10-31 |
 | D-026 | 開發工具:專案 skill `lab-step` 規範每一步流程;`scripts/check.sh`(與 CI 相同的檢查)、`scripts/mutate.py`(手寫 mutation,區分 CAUGHT / MISSED / WRONG-TEST / NO-BUILD);私有資料掃描改由 git hook 強制(`.githooks/` + `scripts/private-scan.sh`,關鍵字在 gitignore 的 `.private-patterns`)。使用者層級:GSD skill 全域關閉(只留 `gsd-surface` 以便恢復)、安裝 `find-skills`(安裝任何 skill 前先讀過內容) | 流程靠描述會每次做得不一樣;「絕對不能漏」的規則要由 hook 強制而不是靠記得;手寫 mutation 腳本每次重寫容易出錯 | 2026-10-31 |
-| D-027 | 導入 cargo-mutants:每一步在手寫 mutation 之後,對改到的 crate 跑一次,`missed` 分成 A 測試缺口 / B 單元測試碰不到 / C 等價或不值得測;先不放進 CI(冷編譯太慢,E2E 完成後再考慮每週跑) | 第一次對 gateway 試跑:92 個 mutant、68 秒,找出 4 個手寫 mutation 漏掉的真缺口(`base_url` 被忽略、`>`/`>=` 邊界、錯誤訊息格式、預設值常數);兩者互補 | 2026-10-31 |
+| D-027 | 導入 cargo-mutants:每一步在手寫 mutation 之後,對改到的 crate 跑一次,`missed` 分成 A 測試缺口 / B 單元測試碰不到 / C 等價或不值得測;CI 不在每次 push 跑(冷編譯太慢、結果要人判斷),改成每週排程只回報(`.github/workflows/mutants.yml`,2026-11-01 加入);說明過理由的 C 類排除在 `.cargo/mutants.toml` | 第一次對 gateway 試跑:92 個 mutant、68 秒,找出 4 個手寫 mutation 漏掉的真缺口(`base_url` 被忽略、`>`/`>=` 邊界、錯誤訊息格式、預設值常數);兩者互補 | 2026-10-31 |
 | D-028 | 量內部函式的 benchmark:cargo feature(`bench-internals`)後面放 `#[doc(hidden)] pub mod bench` 薄包裝,只用中立型別;`[[bench]]` 設 `required-features`;CI 與 `check.sh` 的 clippy 另外跑 `--all-features`、test 用 `--all-features` | 只量公開 API 會量到 HTTP 雜訊;直接公開內部模組會打破封裝;feature 後面的程式不被編譯就會默默壞掉 | 2026-10-31 |
 
 ## 模組
@@ -140,8 +140,6 @@
   001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
 - **呼叫紀錄的保留期限與壓縮(006 一起設計)**:目前只依 UTC 日期切檔,不依大小切(每天約數 MB)。
   到 006 時決定舊檔多久壓縮、多久刪除,以及要不要匯入 DuckDB / SQLite 查詢。
-- **cargo-mutants 每週排程(D-027,001 回顧帶出)**:GitHub Actions 排程 + 手動觸發,只回報不擋;
-  先用 `.cargo/mutants.toml` 排除已說明的等價 mutant(`Gateway::shutdown`、`CHAT_TIMEOUT` 常數)。
 - **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
   `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 

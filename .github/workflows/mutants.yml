@@ -1,0 +1,65 @@
+name: Mutants
+
+# 每週對整個 workspace 跑一次 cargo-mutants(D-027):故意把程式改壞,看有沒有測試失敗。
+# 只回報、不擋:漏掉的 mutant 要人來判斷是 A 測試缺口、B 交給 E2E、還是 C 等價(lab-step 第 3 節),
+# 不適合變成自動的 pass/fail。每一步在本機本來就會跑一次,這裡是第二道防線,抓「忘了跑」與累積的盲點。
+# 已經說明過理由的 mutant 排除在 .cargo/mutants.toml。
+on:
+  schedule:
+    - cron: "0 18 * * 0" # 每週日 18:00 UTC(台北週一 02:00)
+  workflow_dispatch: # Actions 頁面上可以手動觸發
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      # 下載編好的 binary,不必每次從原始碼編譯。版本跟本機一樣。
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: cargo mutants
+        # exit code:0 全部抓到、2 有漏掉、3 有逾時,這三種都是「跑完了」,結果看下面的摘要。
+        # 其他(例如 4 = 沒改過的程式測試就失敗)代表真的壞掉,才讓 job 失敗。
+        run: |
+          set +e
+          cargo mutants --workspace --all-features --timeout 300 --jobs 2 --output target
+          code=$?
+          echo "cargo mutants exit code: $code"
+          case "$code" in
+            0|2|3) exit 0 ;;
+            *) exit "$code" ;;
+          esac
+      - name: summary
+        if: always()
+        run: |
+          out=target/mutants.out
+          count() { if [ -f "$out/$1.txt" ]; then wc -l < "$out/$1.txt"; else echo 0; fi; }
+          {
+            echo "## cargo-mutants"
+            echo
+            echo "| caught | missed | timeout | unviable |"
+            echo "|---|---|---|---|"
+            echo "| $(count caught) | $(count missed) | $(count timeout) | $(count unviable) |"
+            echo
+            echo "### missed(逐一分成 A / B / C,見 .claude/skills/lab-step 第 3 節)"
+            echo
+            echo '```'
+            cat "$out/missed.txt" 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutants-out
+          path: target/mutants.out
+          retention-days: 30

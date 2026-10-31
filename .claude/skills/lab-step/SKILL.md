@@ -86,6 +86,9 @@ cargo-mutants 擅長**機械式**的盲點(`>` 換 `>=` 的邊界、被忽略的
 
 `unviable` 是替換後編譯不過,不算數。
 
+C 類確定之後,加進 `.cargo/mutants.toml` 的 `exclude_re`,**每一條都寫理由**(不寫理由就是在藏測試缺口)。
+每週排程(`.github/workflows/mutants.yml`)會對整個 workspace 再跑一次,摘要在該次 run 的 Summary 頁。
+
 ## 4. 全套檢查
 
 ```bash
