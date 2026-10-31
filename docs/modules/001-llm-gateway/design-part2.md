@@ -277,3 +277,5 @@ max_concurrent = 16
 | 19 | 第二部分 retro | | |
 
 第 10~13 步都在 `crates/llm`,第 14 步是獨立的小 crate,axum 到第 16 步才出現。
+第 16 步只寫 router 與測試(tower `oneshot`,不開 port);`main` 要等第 17 步加上 token 與 Host 檢查才真正啟動 server,
+不讓任何一個 commit 開出沒有保護的 server。

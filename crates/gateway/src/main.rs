@@ -1,4 +1,4 @@
-//! gateway 的 composition root:讀環境 → 檢查 → 組裝 →(第 16 步起)啟動 HTTP server。
+//! gateway 的 composition root:讀環境 → 檢查 → 組裝 →(第 17 步起)啟動 HTTP server。
 //!
 //! ```text
 //! cp gateway.example.toml gateway.toml      # 改成你要的設定
@@ -43,7 +43,9 @@ fn main() -> Result<()> {
     let gateway = assemble(settings, secrets).context("cannot start the gateway")?;
 
     print_summary(&file.dir.join(file_name(&config_path)), &gateway.settings);
-    eprintln!("(the HTTP server arrives in step 16; this run only checks and assembles)");
+    // router 在第 16 步就寫好了,但要等第 17 步加上 token 與 Host 檢查才真正開 port:
+    // 不讓任何一個 commit 開出「沒有保護」的 server。
+    eprintln!("(the HTTP server starts in step 17, together with token and Host checks)");
     gateway.shutdown();
     Ok(())
 }

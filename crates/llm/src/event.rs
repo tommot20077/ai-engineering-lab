@@ -74,6 +74,29 @@ pub enum StreamEvent {
     },
 }
 
+impl StreamEvent {
+    /// 事件種類的名稱,跟序列化後的 `"type"` 欄位一樣(例如 `"text_delta"`)。
+    ///
+    /// gateway 的 SSE 用它當 `event:` 的名稱,瀏覽器才能用 `addEventListener("text_delta", ...)`(D-023)。
+    // 沒有 `_ =>`:新增事件種類時,compiler 會逼我們在這裡替它取名字。
+    // 跟 serde 的名字一致,由下面的測試保證。
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::MessageStart { .. } => "message_start",
+            Self::TextStart { .. } => "text_start",
+            Self::TextDelta { .. } => "text_delta",
+            Self::TextEnd { .. } => "text_end",
+            Self::ThinkingStart { .. } => "thinking_start",
+            Self::ThinkingDelta { .. } => "thinking_delta",
+            Self::ThinkingEnd { .. } => "thinking_end",
+            Self::ToolCallStart { .. } => "tool_call_start",
+            Self::ToolArgsDelta { .. } => "tool_args_delta",
+            Self::ToolCallEnd { .. } => "tool_call_end",
+            Self::Finish { .. } => "finish",
+        }
+    }
+}
+
 impl fmt::Debug for StreamEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 只有三種 delta 帶模型輸出的內容,只把它們換成長度;其他事件照常印出。
@@ -151,6 +174,67 @@ mod tests {
             serde_json::to_value(&ev).unwrap(),
             json!({ "type": "text_delta", "index": 0, "text": "hi" })
         );
+    }
+
+    #[test]
+    fn type_name_matches_the_serialized_type_tag_for_every_variant() {
+        let meta = ProviderMetadata::default;
+        let all = [
+            StreamEvent::MessageStart {
+                id: None,
+                model: "m".into(),
+            },
+            StreamEvent::TextStart {
+                index: 0,
+                meta: meta(),
+            },
+            StreamEvent::TextDelta {
+                index: 0,
+                text: "t".into(),
+            },
+            StreamEvent::TextEnd {
+                index: 0,
+                meta: meta(),
+            },
+            StreamEvent::ThinkingStart {
+                index: 0,
+                meta: meta(),
+            },
+            StreamEvent::ThinkingDelta {
+                index: 0,
+                text: "t".into(),
+            },
+            StreamEvent::ThinkingEnd {
+                index: 0,
+                meta: meta(),
+            },
+            StreamEvent::ToolCallStart {
+                index: 0,
+                id: "i".into(),
+                name: "n".into(),
+                meta: meta(),
+            },
+            StreamEvent::ToolArgsDelta {
+                index: 0,
+                partial_json: "{".into(),
+            },
+            StreamEvent::ToolCallEnd {
+                index: 0,
+                meta: meta(),
+            },
+            StreamEvent::Finish {
+                stop: crate::StopReason {
+                    kind: crate::StopKind::EndTurn,
+                    raw: "end_turn".into(),
+                },
+                usage: Usage::default(),
+                meta: meta(),
+            },
+        ];
+        for event in all {
+            let tag = serde_json::to_value(&event).unwrap()["type"].clone();
+            assert_eq!(tag, event.type_name(), "{event:?}");
+        }
     }
 
     #[test]

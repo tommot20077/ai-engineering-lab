@@ -54,6 +54,10 @@ jiff = { version = "0.2", features = ["serde"] }
 toml = "1"
 # URL 解析。reqwest 本來就依賴它(同一個版本,不會多編譯),gateway 直接宣告來檢查 base_url。
 url = "2"
+# HTTP server(D-018:gateway 是 HTTP 外殼)。底層是 tower 的 Service 與 hyper。
+axum = "0.8"
+# 測試用:`ServiceExt::oneshot` 把一個請求直接丟給 router,不必開 port、不經過網路。
+tower = { version = "0.5", features = ["util"] }
 # binary 用的錯誤型別:不必替每種錯誤定義 enum,`?` 一路往上丟,印出時帶完整的原因鏈。
 # library 用 thiserror(呼叫者要能 match),binary 用 anyhow(只需要印給人看)。
 anyhow = "1"
