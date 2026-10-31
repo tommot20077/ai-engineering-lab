@@ -50,6 +50,8 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v7", "serde"] }
 # 日期時間。用來記錄 UTC 時間、決定紀錄檔名;serde 讓時間直接序列化成 RFC 3339 字串。
 jiff = { version = "0.2", features = ["serde"] }
+# 設定檔格式(D-024)。Cargo 自己也用它,維護狀況好。
+toml = "1"
 
 # 只在測試用的依賴。
 proptest = "1"
