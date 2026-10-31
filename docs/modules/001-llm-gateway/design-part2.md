@@ -1,6 +1,6 @@
 # 001 LLM Gateway — 設計(第二部分:decorator + `crates/gateway`)
 
-> 狀態:**待審核(2026-10-31)**。整理 D-017~D-024,逐項討論過;本文件補上結構、介面與實作順序。
+> 狀態:**已定案(2026-10-31)**。整理 D-017~D-025,逐項討論過;本文件補上結構、介面與實作順序。
 > 第一部分見 `design.md`(§1~§9),本文件從 §10 接著編號。
 
 ## 10. 要解決什麼
@@ -27,6 +27,8 @@ crates/llm/src/
       mod.rs               Record<P> + RecordSink trait
       model.rs             CallRecord(紀錄的 JSON 形狀)
       jsonl.rs             JsonlWriter(背景執行緒寫檔)
+crates/config-loader/       給 binary 用的共用設定工具(D-025);library 不依賴它
+  src/lib.rs               路徑展開、預設資料目錄、讀 TOML、讀秘密環境變數
 crates/gateway/
   src/
     lib.rs                 build_app(state) -> Router(給 E2E 測試用)
@@ -39,7 +41,7 @@ crates/gateway/
 gateway.example.toml       進 git;gateway.toml 不進(D-024)
 ```
 
-依賴方向不變:`gateway` → `llm`。`llm` 不知道 HTTP server 存在,也不讀任何檔案或環境變數(D-016);
+依賴方向:`gateway` → `llm`、`gateway` → `config-loader`。`llm` 不知道 HTTP server 存在,也不讀任何檔案或環境變數(D-016);
 `JsonlWriter` 會**寫**檔,但目錄由 constructor 傳入。
 
 ## 12. Decorator 機制(D-018、D-019)
@@ -128,14 +130,23 @@ pub trait RecordSink: Send + Sync {
 - 一筆 = 先組好整行(含換行)再一次寫入;讀取端(007)跳過最後一行殘缺的資料,寫進 gateway README。
 - `shutdown(self)`:關閉佇列、寫完剩下的紀錄、等執行緒結束。
 
-## 16. gateway:設定與啟動(D-024)
+## 16. gateway:設定與啟動(D-024、D-025)
+
+**`config-loader`**(所有讀設定檔的 binary 共用,現在只放 gateway 需要的):
+
+| 函式 | 規則 |
+|---|---|
+| 路徑解析 | 只展開開頭的 `~/` → 家目錄;不展開 `$VAR`;**相對路徑以設定檔所在目錄為準**(同 Cargo),不以執行指令的目錄為準 |
+| 預設資料目錄 | macOS `~/Library/Application Support/ai-engineering-lab/<程式名>`;Linux `~/.local/share/ai-engineering-lab/<程式名>` |
+| 讀 TOML | 錯誤訊息帶檔名與行號;找不到檔案時附上提示 |
+| 讀秘密環境變數 | 直接包成 `SecretString`;沒設定給出清楚錯誤 |
 
 `main.rs` 是 composition root,依序:
 
 1. `dotenvy` 讀 `.env`:`ANTHROPIC_API_KEY`、`GATEWAY_TOKEN`,都包 `SecretString`;缺任何一個就拒絕啟動。
 2. 讀 `--config <path>`(預設 `./gateway.toml`);找不到 → 提示 `cp gateway.example.toml gateway.toml`。
 3. 解析與檢查(`deny_unknown_fields`):別名表非空;retry 數值合理;`bind` 不是本機位址時必須 `allow_remote = true`
-   並列出 `allowed_hosts`;紀錄目錄展開 `~`、建立或檢查權限、確認可寫。任何一項不過就印原因並結束。
+   並列出 `allowed_hosts`;紀錄目錄經 `config-loader` 解析、建立或檢查權限、確認可寫。任何一項不過就印原因並結束。
 4. 組裝 `Record [ Retry [ Alias [ AnthropicClient ] ] ]`,型別是 `Arc<dyn LlmProvider>`;依 `record.enabled` 決定包不包 Record。
 5. 印出 bind 位址與紀錄目錄,啟動 axum。
 
@@ -172,7 +183,8 @@ max_concurrent = 16
 | `POST /v1/chat` | body = `Request`,回完整 `Response`(JSON);總時間上限 10 分鐘 → 504 |
 | `POST /v1/chat/stream` | body = `Request`,回 SSE:`event: <type>`、`data: <StreamEvent JSON>`,meta 原樣傳出 |
 | `GET /v1/models` | 別名清單 `{ "models": [{ "alias", "model" }] }` |
-| `GET /health` | `{ "status", "version", "records": { "dropped" } }` |
+| `GET /health` | **公開**(不檢查 token 與 Host),只回 `{"status":"ok"}`,給服務檢查用(liveness) |
+| `GET /v1/status` | 需要 token:`{ "version", "records": { "dropped" }, "aliases" }`,給自己除錯用 |
 
 **串流端點**:先等第一個項目。是錯誤 → 回對應狀態碼 + JSON 錯誤;是事件 → 回 200 並開始 SSE。
 之後出錯送 `event: error` 再關閉;每 15 秒送 `: keep-alive`;不送 `[DONE]`;
@@ -196,8 +208,9 @@ max_concurrent = 16
 
 ## 18. 安全(D-017、D-024)
 
-- 請求依序通過:**Host 檢查**(只接受 `127.0.0.1` / `localhost` / `[::1]` 加上 port,或 `allowed_hosts`)
-  → **token**(`Authorization: Bearer`,`subtle` 固定時間比較;所有端點都需要,包含 `/health`)
+- `/health` 例外:不檢查任何東西,也不回傳任何資訊(D-025)。
+- 其他請求依序通過:**Host 檢查**(只接受 `127.0.0.1` / `localhost` / `[::1]` 加上 port,或 `allowed_hosts`)
+  → **token**(`Authorization: Bearer`,`subtle` 固定時間比較)
   → **body 上限** → handler。
 - 不開 CORS;之後網頁介面要用時明確列出來源。
 - 同時呼叫數用 `Semaphore::try_acquire_owned`,拿不到就 429;**permit 跟著串流走**,串流結束才歸還。
@@ -211,8 +224,9 @@ max_concurrent = 16
 |---|---|
 | 單元(`llm`) | blanket impl 轉發 `complete`(用覆寫 `complete` 的假 provider 抓「改用預設值」);Alias 嚴格 / 寬鬆;Retry:重試後開始事件只送一次、輸出後不重試、401 不重試、次數用完回最後的錯誤、retry-after 超過上限直接失敗、空回答也放行(暫停時間);Record:四種 outcome、served model、延遲、取消時只送一次 |
 | 單元(`JsonlWriter`) | 每天一檔、權限 700/600、佇列滿時計數、shutdown 寫完剩餘紀錄(`tempfile`) |
+| 單元(`config-loader`) | `~/` 展開、不展開 `$VAR`、相對路徑以設定檔目錄為準、未知欄位的錯誤含行號、缺秘密的錯誤 |
 | 單元(`gateway`) | 設定:未知欄位、各項檢查;錯誤對照表(§17 每一列);token 比對;Host 檢查 |
-| E2E | 真 gateway(隨機 port)+ wiremock 假 Claude + 暫存紀錄目錄:完整與串流成功、紀錄有寫入、401、Host 拒絕、未知別名 400、上游 429 → 429、上游 401 → 502、529 後重試成功、413、busy 429 |
+| E2E | 真 gateway(隨機 port)+ wiremock 假 Claude + 暫存紀錄目錄:完整與串流成功、紀錄有寫入、401、Host 拒絕、`/health` 不帶 token 也成功、未知別名 400、上游 429 → 429、上游 401 → 502、529 後重試成功、413、busy 429 |
 | Benchmark | Anthropic 事件的 JSON 翻譯(第一部分 retro 帶過來的項目) |
 
 拒絕類測試照第一部分的教訓,**指名是哪一步拒絕的**(retro §4)。
@@ -227,11 +241,11 @@ max_concurrent = 16
 | `jiff` | llm | UTC 時間與日期 |
 | `fastrand` | llm | jitter |
 | `axum` 0.8 | gateway | HTTP server |
-| `toml` | gateway | 設定檔 |
+| `toml` | config-loader | 設定檔 |
 | `subtle` | gateway | 固定時間比較 |
 | `tracing-subscriber` | gateway | 營運 log 輸出到 stderr |
 | `anyhow` | gateway | binary 的錯誤(CLAUDE.md 技術選型) |
-| `tempfile`(dev) | llm | 測試用暫存目錄 |
+| `tempfile`(dev) | llm、config-loader | 測試用暫存目錄 |
 
 授權都在 `deny.toml` 允許範圍內,加入時以 `cargo deny` 確認。
 
@@ -243,10 +257,11 @@ max_concurrent = 16
 | 11 | `Retry` | `tokio::time`、labeled loop、事件扣住、jitter | 單元(暫停時間) |
 | 12 | `CallRecord` + `RecordSink` + `Record` | `Drop`、`Instant`、UUID v7 | 單元(記憶體 sink) |
 | 13 | `JsonlWriter` | OS 執行緒、`sync_channel`、`OpenOptionsExt`、`AtomicU64` | 單元(暫存目錄) |
-| 14 | `crates/gateway` 骨架:設定、啟動檢查、組裝 | binary crate、`anyhow`、serde 預設值、`deny_unknown_fields` | 單元 |
-| 15 | HTTP API:handlers、SSE、`ApiError` | axum extractor、`IntoResponse`、`Sse` | 整合(tower `oneshot`) |
-| 16 | 安全與上限:token、Host、body、並行、逾時、優雅關機 | middleware(`from_fn`)、`Semaphore`、`subtle` | 整合 |
-| 17 | E2E + gateway README + `gateway.example.toml` + 翻譯 benchmark | 起真 server | E2E、bench |
-| 18 | 第二部分 retro | | |
+| 14 | `crates/config-loader` | `Path` / `PathBuf`、泛型函式 `load<T: DeserializeOwned>` | 單元(暫存目錄) |
+| 15 | `crates/gateway` 骨架:設定、啟動檢查、組裝 | binary crate、`anyhow`、serde 預設值、`deny_unknown_fields` | 單元 |
+| 16 | HTTP API:handlers、SSE、`ApiError` | axum extractor、`IntoResponse`、`Sse` | 整合(tower `oneshot`) |
+| 17 | 安全與上限:token、Host、body、並行、逾時、優雅關機 | middleware(`from_fn`)、`Semaphore`、`subtle` | 整合 |
+| 18 | E2E + gateway README + `gateway.example.toml` + 翻譯 benchmark | 起真 server | E2E、bench |
+| 19 | 第二部分 retro | | |
 
-第 10~13 步都在 `crates/llm`,不需要 server;axum 到第 15 步才出現。
+第 10~13 步都在 `crates/llm`,第 14 步是獨立的小 crate,axum 到第 16 步才出現。

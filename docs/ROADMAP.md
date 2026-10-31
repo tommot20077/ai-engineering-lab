@@ -43,7 +43,7 @@
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
 - **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
 - **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
-  設計分岔全部決定(D-017~D-024),整理成 `docs/modules/001-llm-gateway/design-part2.md` 待審核。
+  設計已定案(D-017~D-025,`docs/modules/001-llm-gateway/design-part2.md`);下一步實作第 10 步。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
 
@@ -75,6 +75,7 @@
 | D-022 | Retry 預設:最多 3 次嘗試;指數退避 + full jitter(第一次上限 1 秒、每次加倍、最長 10 秒),測試用 tokio 暫停時間;有 `retry-after` 就照它,但超過最長上限就不等、直接回傳錯誤;數值放 `RetryPolicy::default()`,可由 gateway.toml 覆寫 | 伺服器端 fallback 已處理多數過載;越等越久給對方喘息、隨機避免同時重試;對話情境不宜久等,把長時間不可用交給上層(之後 010 可改路由) | 2026-10-31 |
 | D-023 | gateway 原生 HTTP API:(1) `POST /v1/chat` 回完整 `Response` JSON、`POST /v1/chat/stream` 回 SSE,body 就是 `Request`(2) SSE 每則 `event: <type>` + `data: <StreamEvent JSON>`,meta 原樣傳出;中途出錯送 `error` 事件後關閉;沒有 finish/error 就斷線視為中斷;每 15 秒送 `: keep-alive`;不送 `[DONE]`(3) 錯誤轉成對呼叫者有意義的狀態碼(上游 401/403 → 502、429 → 429 附 Retry-After、逾時 → 504、其餘上游 → 502);統一 body `{"error":{kind,message,retryable}}`,上游 body 只在 400 時附上;串流端點等第一個項目再決定狀態碼;`Interrupted` 附 partial(4) `GET /health`(含遺失紀錄數)、`GET /v1/models`(別名清單);body 上限 10 MiB、同時上游呼叫 16(超過回 429 gateway_busy)、非串流總時間 10 分鐘;優雅關機 30 秒並清空紀錄佇列;未知別名回 400(Alias 嚴格模式由 constructor 決定) | 每個端點只有一種回應格式,body 直接用現成型別;沿用自家 SseParser/StreamEvent 可 dogfooding;狀態碼要告訴呼叫者該怎麼辦;別名表是成本與換模型的控制點 | 2026-10-31 |
 | D-024 | gateway 強制使用 token:隨機固定 token(非 JWT)放 `.env` 的 `GATEWAY_TOKEN`、包 `SecretString`、固定時間比較(`subtle`)、沒設定就拒絕啟動;另檢查 `Host` header 擋 DNS rebinding、不開 CORS。設定檔用 TOML:`gateway.example.toml` 進 git、`gateway.toml` 不進;秘密只放 `.env`;`deny_unknown_fields` 與數值、目錄、bind 位址全部在啟動時檢查,非本機 bind 需明確 `allow_remote = true`;別名先放設定檔(改動頻率低),執行中可替換的表留到 011 | 本機連得到 ≠ 只有本人(瀏覽器、其他程式);單一使用者用 JWT 只增加金鑰與過期管理的風險;TOML 型別明確、是 Rust 慣例,YAML 有隱式型別陷阱且主流 serde 函式庫已封存;設定錯誤要在啟動時擋下 | 2026-10-31 |
+| D-025 | `/health` 公開(不檢查 token 與 Host、只回 ok),內部資訊移到需要 token 的 `/v1/status`;新增 `crates/config-loader` 給所有 binary 共用:只展開開頭 `~/`、不展開 `$VAR`、相對路徑以設定檔所在目錄為準、預設資料目錄、讀 TOML(錯誤含行號)、讀秘密環境變數成 `SecretString`;library 不依賴它 | 服務檢查帶不了 token,而 `/health` 不洩漏資訊也不花錢;002、005 也會讀設定檔,規則(特別是相對路徑)要一致 | 2026-10-31 |
 
 ## 模組
 
