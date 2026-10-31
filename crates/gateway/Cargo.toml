@@ -26,9 +26,13 @@ dotenvy.workspace = true
 axum.workspace = true
 futures.workspace = true
 serde_json.workspace = true
+subtle.workspace = true
+# runtime(main)、TcpListener、Ctrl+C / SIGTERM、Semaphore(並行上限)、timeout。
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 
 [dev-dependencies]
 toml.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# 測試多開 test-util:暫停時間,逾時測試不必真的等。
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 tower.workspace = true

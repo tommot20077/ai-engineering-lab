@@ -92,6 +92,12 @@ struct ErrorBody<'a> {
 impl IntoResponse for ApiError {
     fn into_response(self) -> HttpResponse {
         let mut response = (self.status, Json(self.envelope())).into_response();
+        // RFC 7235:401 一定要附上 `WWW-Authenticate`,告訴對方該用哪種驗證方式。
+        if self.status == StatusCode::UNAUTHORIZED {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        }
         if let Some(wait) = self.retry_after
             && let Ok(value) = HeaderValue::from_str(&wait.as_secs().to_string())
         {

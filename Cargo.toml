@@ -56,6 +56,8 @@ toml = "1"
 url = "2"
 # HTTP server(D-018:gateway 是 HTTP 外殼)。底層是 tower 的 Service 與 hyper。
 axum = "0.8"
+# 固定時間比較:比對 token 時,不管哪裡不一樣都比完整串,花的時間一樣,防 timing attack(D-024)。
+subtle = "2"
 # 測試用:`ServiceExt::oneshot` 把一個請求直接丟給 router,不必開 port、不經過網路。
 tower = { version = "0.5", features = ["util"] }
 # binary 用的錯誤型別:不必替每種錯誤定義 enum,`?` 一路往上丟,印出時帶完整的原因鏈。

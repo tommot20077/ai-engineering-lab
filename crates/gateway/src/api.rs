@@ -8,56 +8,63 @@
 //! | `GET /v1/status` | 版本、紀錄遺失數 |
 //! | `GET /health` | `{"status":"ok"}`,給服務檢查用 |
 //!
-//! token、Host 檢查、body 上限、並行上限在第 17 步加上(design-part2.md §18)。
+//! 除了 `/health`,每個請求都先通過 Host 檢查與 token 檢查(guard.rs、design-part2.md §18)。
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::StatusCode;
+use axum::middleware;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt, future, stream};
-use llm::{JsonlWriter, LlmError, LlmProvider, Request, Response, StreamEvent};
+use llm::{JsonlWriter, LlmError, LlmProvider, Request, Response, SecretString, StreamEvent};
 use serde_json::{Value, json};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::error::ApiError;
+use crate::guard;
 use crate::startup::Gateway;
+
+/// 非串流請求最多等多久(D-023)。長回答請用 `/v1/chat/stream`。
+pub const CHAT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// 每個請求都拿得到的共用狀態。
 // `Clone`:axum 會替每個請求複製一份。裡面全是 `Arc`,複製只是計數 +1,不複製資料。
 // Java 對照:Spring 注入的 singleton bean;Rust 要明確寫出「共用」(`Arc`)。
+// `pub(crate)`:同一個 crate 的 guard.rs 與測試可以直接讀寫,外面看不到。
 #[derive(Clone)]
 pub struct AppState {
-    provider: Arc<dyn LlmProvider>,
-    aliases: Arc<BTreeMap<String, String>>,
-    records: Option<Arc<JsonlWriter>>,
-}
-
-impl AppState {
-    pub fn new(
-        provider: Arc<dyn LlmProvider>,
-        aliases: BTreeMap<String, String>,
-        records: Option<Arc<JsonlWriter>>,
-    ) -> Self {
-        Self {
-            provider,
-            aliases: Arc::new(aliases),
-            records,
-        }
-    }
+    pub(crate) provider: Arc<dyn LlmProvider>,
+    pub(crate) aliases: Arc<BTreeMap<String, String>>,
+    pub(crate) records: Option<Arc<JsonlWriter>>,
+    pub(crate) token: Arc<SecretString>,
+    /// `Arc<[String]>`:建好之後不會再改的清單。比 `Arc<Vec<String>>` 少一層間接。
+    pub(crate) allowed_hosts: Arc<[String]>,
+    /// 同時呼叫上游的名額(D-023)。
+    pub(crate) permits: Arc<Semaphore>,
+    pub(crate) chat_timeout: Duration,
+    pub(crate) max_body_bytes: usize,
 }
 
 impl From<&Gateway> for AppState {
     fn from(gateway: &Gateway) -> Self {
-        Self::new(
-            Arc::clone(&gateway.provider),
-            gateway.settings.aliases.clone(),
-            gateway.records.clone(),
-        )
+        let settings = &gateway.settings;
+        Self {
+            provider: Arc::clone(&gateway.provider),
+            aliases: Arc::new(settings.aliases.clone()),
+            records: gateway.records.clone(),
+            token: Arc::clone(&gateway.token),
+            allowed_hosts: Arc::from(settings.allowed_hosts.clone()),
+            permits: Arc::new(Semaphore::new(settings.max_concurrent)),
+            chat_timeout: CHAT_TIMEOUT,
+            max_body_bytes: settings.max_body_bytes,
+        }
     }
 }
 
@@ -68,15 +75,49 @@ const KEEP_ALIVE: Duration = Duration::from_secs(15);
 pub fn router(state: AppState) -> Router {
     // Java 對照:像是把多個 `@GetMapping` / `@PostMapping` 寫在同一個地方;
     // `.with_state` 等於把共用的 bean 注入給所有 handler。
-    Router::new()
-        .route("/health", get(health))
+    let protected = Router::new()
         .route("/v1/status", get(status))
         .route("/v1/models", get(models))
         .route("/v1/chat", post(chat))
         .route("/v1/chat/stream", post(chat_stream))
         // 沒有對應的路徑:回我們統一格式的 404,而不是 axum 預設的空 body。
         .fallback(|| async { ApiError::not_found() })
+        // `layer` 一層包一層,跟 decorator 一樣:「後加的在外面」。
+        // 所以請求的順序是:Host 檢查 → token 檢查 → body 上限 → handler(design-part2.md §18)。
+        // body 上限:超過時 `Json` 解析失敗(413),經由 error.rs 轉成 `payload_too_large`。
+        .layer(DefaultBodyLimit::max(state.max_body_bytes))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            guard::require_token,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            guard::require_allowed_host,
+        ));
+
+    // `/health` 放在受保護的 router 外面:服務檢查帶不了 token,也可能用 IP 當 Host(D-025)。
+    // 注意:axum 的 `.layer()` 只包住「在它之前加入」的路由。順序寫錯,保護範圍就跟著變。
+    Router::new()
+        .route("/health", get(health))
+        .merge(protected)
         .with_state(state)
+}
+
+/// 拿一個呼叫上游的名額。拿不到就立刻回 429,不排隊(D-023)。
+// `try_acquire_owned`:不等待;`owned` 的 permit 不借用 Semaphore(它自己持有一份 `Arc`),
+// 所以可以被搬進串流、活得比這個函式久。permit 被丟掉時,名額自動歸還(又是 Drop)。
+// Java 對照:`semaphore.tryAcquire()`,但歸還不用寫 finally。
+fn acquire(state: &AppState) -> Result<OwnedSemaphorePermit, ApiError> {
+    Arc::clone(&state.permits)
+        .try_acquire_owned()
+        .map_err(|_| ApiError {
+            retryable: true,
+            ..ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "gateway_busy",
+                "too many requests in flight; try again shortly",
+            )
+        })
 }
 
 /// 讀出並檢查請求 body。
@@ -97,8 +138,23 @@ async fn chat(
     body: Result<Json<Request>, JsonRejection>,
 ) -> Result<Json<Response>, ApiError> {
     let request = parse(body)?;
-    // `?` 把 `LlmError` 轉成 `ApiError`(靠 error.rs 的 `From<LlmError>`)。
-    let response = state.provider.complete(request).await?;
+    // `_permit`(有名字):活到函式結束,回應組好才歸還名額。寫成 `_` 的話會立刻被丟掉。
+    let _permit = acquire(&state)?;
+    // 兩個 `?`:外層的 `timeout` 可能逾時(第一個 `?`,轉成 504);
+    // 沒逾時的話,裡面的結果是 `Result<Response, LlmError>`(第二個 `?`,轉成對應的狀態碼)。
+    // 逾時時 `complete()` 的 future 被丟掉 → 上游請求被取消,Record 記成 cancelled。
+    let response = tokio::time::timeout(state.chat_timeout, state.provider.complete(request))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                "upstream_timeout",
+                format!(
+                    "no complete answer within {} s; use /v1/chat/stream for long answers",
+                    state.chat_timeout.as_secs()
+                ),
+            )
+        })??;
     Ok(Json(response))
 }
 
@@ -108,6 +164,7 @@ async fn chat_stream(
     body: Result<Json<Request>, JsonRejection>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let request = parse(body)?;
+    let permit = acquire(&state)?;
     let mut events = state.provider.stream(request);
 
     // 先等第一個項目,再決定狀態碼(D-023):HTTP 狀態碼一送出就改不了。
@@ -123,7 +180,13 @@ async fn chat_stream(
     // 呼叫者斷線時 axum 會丟掉這個串流 → provider 的串流也被丟掉 → 上游連線關閉,Record 記成 cancelled。
     let sse = stream::once(future::ready(Ok(first)))
         .chain(events)
-        .map(|item| Ok(to_sse_event(item)));
+        // `move` 把 permit 搬進 closure,closure 又被串流持有:串流活多久,名額就佔多久。
+        // 呼叫者斷線 → 串流被丟掉 → permit 被丟掉 → 名額歸還。
+        // closure 裡一定要「用到」permit,`move` 才會把它搬進來;只是拿個參考,不做任何事。
+        .map(move |item| {
+            let _held = &permit;
+            Ok(to_sse_event(item))
+        });
     Ok(Sse::new(sse).keep_alive(KeepAlive::new().interval(KEEP_ALIVE).text("keep-alive")))
 }
 
@@ -155,7 +218,7 @@ async fn models(State(state): State<AppState>) -> Json<Value> {
     Json(json!({ "models": models }))
 }
 
-/// `GET /v1/status`:給自己除錯用。第 17 步起需要 token。
+/// `GET /v1/status`:給自己除錯用,需要 token。
 async fn status(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         // `env!`:編譯時就把 Cargo.toml 的版本號寫進程式。
@@ -175,150 +238,20 @@ async fn health() -> Json<Value> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use axum::body::Body;
-    use axum::http::{Request as HttpRequest, StatusCode, header};
-    use llm::{Content, EventStream, Message, ProviderMetadata, Role, StopKind, StopReason, Usage};
+    use axum::http::header;
+    use llm::StopKind;
+    use serde_json::json;
     use tower::ServiceExt;
 
     use super::*;
+    use crate::testing::{
+        HOST, Scripted, TOKEN, answer, chat_body, delta, request, send, start, state, text_start,
+        within,
+    };
 
-    type Script = Vec<std::result::Result<StreamEvent, fn() -> LlmError>>;
-
-    /// 假的 provider:照劇本吐事件,並計算被呼叫了幾次。
-    struct Scripted {
-        script: Script,
-        calls: AtomicUsize,
-    }
-
-    impl LlmProvider for Scripted {
-        fn stream(&self, _request: Request) -> EventStream {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            let items: Vec<llm::Result<StreamEvent>> = self
-                .script
-                .iter()
-                .map(|item| match item {
-                    Ok(event) => Ok(event.clone()),
-                    Err(make_error) => Err(make_error()),
-                })
-                .collect();
-            Box::pin(stream::iter(items))
-        }
-    }
-
-    fn start() -> StreamEvent {
-        StreamEvent::MessageStart {
-            id: Some("msg_1".into()),
-            model: "claude-haiku-5-5".into(),
-        }
-    }
-
-    fn text_start() -> StreamEvent {
-        StreamEvent::TextStart {
-            index: 0,
-            meta: ProviderMetadata::default(),
-        }
-    }
-
-    fn delta(text: &str) -> StreamEvent {
-        StreamEvent::TextDelta {
-            index: 0,
-            text: text.into(),
-        }
-    }
-
-    fn answer() -> Script {
-        vec![
-            Ok(start()),
-            Ok(text_start()),
-            Ok(delta("你好")),
-            Ok(StreamEvent::TextEnd {
-                index: 0,
-                meta: ProviderMetadata::default(),
-            }),
-            Ok(StreamEvent::Finish {
-                stop: StopReason {
-                    kind: StopKind::EndTurn,
-                    raw: "end_turn".into(),
-                },
-                usage: Usage::default(),
-                meta: ProviderMetadata::default(),
-            }),
-        ]
-    }
-
-    fn app(script: Script) -> (Router, Arc<Scripted>) {
-        let provider = Arc::new(Scripted {
-            script,
-            calls: AtomicUsize::new(0),
-        });
-        let aliases = BTreeMap::from([
-            ("default".into(), "claude-sonnet-5-5".into()),
-            ("cheap".into(), "claude-haiku-5-5".into()),
-        ]);
-        let state = AppState::new(provider.clone(), aliases, None);
-        (router(state), provider)
-    }
-
-    fn chat_body(max_tokens: u32) -> String {
-        serde_json::to_string(&Request {
-            model: "cheap".into(),
-            system: None,
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![Content::Text {
-                    text: "hi".into(),
-                    meta: ProviderMetadata::default(),
-                }],
-            }],
-            tools: vec![],
-            max_tokens,
-            provider_options: ProviderMetadata::default(),
-        })
-        .unwrap()
-    }
-
-    struct Reply {
-        status: StatusCode,
-        headers: axum::http::HeaderMap,
-        body: String,
-    }
-
-    impl Reply {
-        fn json(&self) -> Value {
-            serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("{e}: {}", self.body))
-        }
-
-        /// SSE 裡依序出現的 `event:` 名稱。
-        fn event_names(&self) -> Vec<&str> {
-            self.body
-                .lines()
-                .filter_map(|line| line.strip_prefix("event: "))
-                .collect()
-        }
-    }
-
-    /// 不開 port:用 tower 的 `oneshot` 把一個請求直接丟給 router。
-    async fn send(app: Router, method: &str, uri: &str, body: Option<String>) -> Reply {
-        let mut request = HttpRequest::builder().method(method).uri(uri);
-        if body.is_some() {
-            request = request.header(header::CONTENT_TYPE, "application/json");
-        }
-        let request = request
-            .body(body.map(Body::from).unwrap_or_else(Body::empty))
-            .unwrap();
-        let response = app.oneshot(request).await.unwrap();
-        let status = response.status();
-        let headers = response.headers().clone();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        Reply {
-            status,
-            headers,
-            body: String::from_utf8(bytes.to_vec()).unwrap(),
-        }
+    fn app(script: crate::testing::Script) -> (Router, Arc<Scripted>) {
+        let provider = Scripted::new(script);
+        (router(state(provider.clone())), provider)
     }
 
     #[tokio::test]
@@ -370,7 +303,7 @@ mod tests {
     async fn stream_error_before_any_event_gets_a_real_status_code() {
         // 先等第一個項目再決定狀態碼:這時還沒送出 200,所以能回 429 + JSON(D-023)。
         let (app, _) = app(vec![Err(|| {
-            LlmError::http(429, Some(std::time::Duration::from_secs(7)), "")
+            LlmError::http(429, Some(Duration::from_secs(7)), "")
         })]);
 
         let reply = send(app, "POST", "/v1/chat/stream", Some(chat_body(64))).await;
@@ -414,7 +347,7 @@ mod tests {
 
         assert_eq!(reply.status, StatusCode::BAD_REQUEST);
         assert_eq!(reply.json()["error"]["kind"], "invalid_request");
-        assert_eq!(provider.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.calls(), 0);
     }
 
     #[tokio::test]
@@ -433,7 +366,7 @@ mod tests {
             "{}",
             reply.body
         );
-        assert_eq!(provider.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.calls(), 0);
     }
 
     #[tokio::test]
@@ -494,5 +427,98 @@ mod tests {
 
         assert_eq!(reply.status, StatusCode::NOT_FOUND);
         assert_eq!(reply.json()["error"]["kind"], "not_found");
+    }
+
+    #[tokio::test]
+    async fn a_body_over_the_limit_is_413_without_calling_the_provider() {
+        let provider = Scripted::new(answer());
+        let app = router(AppState {
+            max_body_bytes: 64,
+            ..state(provider.clone())
+        });
+
+        let reply = send(app, "POST", "/v1/chat", Some(chat_body(64))).await;
+
+        assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(reply.json()["error"]["kind"], "payload_too_large");
+        assert_eq!(provider.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_stream_holds_its_permit_until_it_ends() {
+        // 只有 1 個名額;回答一直沒結束(hanging)。
+        let provider = Scripted::hanging(vec![Ok(start()), Ok(text_start()), Ok(delta("你"))]);
+        let app = router(AppState {
+            permits: Arc::new(Semaphore::new(1)),
+            ..state(provider.clone())
+        });
+
+        // 第一個串流:拿到回應(200)但不讀完 body,串流還活著 → 名額還被佔著。
+        let first = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/v1/chat/stream",
+                Some(chat_body(64)),
+                Some(HOST),
+                Some(TOKEN),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let busy = within(send(
+            app.clone(),
+            "POST",
+            "/v1/chat/stream",
+            Some(chat_body(64)),
+        ))
+        .await;
+        assert_eq!(busy.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(busy.json()["error"]["kind"], "gateway_busy");
+        assert_eq!(busy.json()["error"]["retryable"], true);
+        assert_eq!(provider.calls(), 1, "滿了就不該再呼叫上游");
+
+        // 呼叫者斷線(丟掉回應)→ 串流被丟掉 → 名額歸還。
+        drop(first);
+        let again = app
+            .oneshot(request(
+                "POST",
+                "/v1/chat/stream",
+                Some(chat_body(64)),
+                Some(HOST),
+                Some(TOKEN),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(again.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn chat_permits_are_returned_after_each_response() {
+        let provider = Scripted::new(answer());
+        let app = router(AppState {
+            permits: Arc::new(Semaphore::new(1)),
+            ..state(provider)
+        });
+
+        for _ in 0..3 {
+            let reply = send(app.clone(), "POST", "/v1/chat", Some(chat_body(64))).await;
+            assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn chat_that_never_finishes_times_out_with_504() {
+        let provider = Scripted::hanging(vec![Ok(start())]);
+        let app = router(AppState {
+            chat_timeout: Duration::from_secs(1),
+            ..state(provider)
+        });
+
+        let reply = within(send(app, "POST", "/v1/chat", Some(chat_body(64)))).await;
+
+        assert_eq!(reply.status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(reply.json()["error"]["kind"], "upstream_timeout");
     }
 }

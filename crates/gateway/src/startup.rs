@@ -25,7 +25,8 @@ pub struct Gateway {
     pub provider: Arc<dyn LlmProvider>,
     /// 另外留一份 writer:`/v1/status` 要讀遺失數,關機時要確實寫完。
     pub records: Option<Arc<JsonlWriter>>,
-    pub token: SecretString,
+    /// `Arc`:每個請求的 AppState 都要讀它,共用同一份,不複製秘密。
+    pub token: Arc<SecretString>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -82,7 +83,7 @@ pub fn assemble(settings: Settings, secrets: Secrets) -> Result<Gateway, Startup
         settings,
         provider,
         records,
-        token: secrets.gateway_token,
+        token: Arc::new(secrets.gateway_token),
     })
 }
 

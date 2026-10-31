@@ -5,4 +5,8 @@
 pub mod api;
 pub mod config;
 pub mod error;
+mod guard;
 pub mod startup;
+
+#[cfg(test)]
+mod testing;

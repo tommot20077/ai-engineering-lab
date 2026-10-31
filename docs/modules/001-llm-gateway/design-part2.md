@@ -221,6 +221,8 @@ max_concurrent = 16
 - 其他請求依序通過:**Host 檢查**(只接受 `127.0.0.1` / `localhost` / `[::1]` 加上 port,或 `allowed_hosts`)
   → **token**(`Authorization: Bearer`,`subtle` 固定時間比較)
   → **body 上限** → handler。
+- Host 不對回 403 `invalid_host`(在 token 之前檢查,所以 Host 錯又沒 token 也是 403);token 不對回 401 `unauthorized`
+  並附 `WWW-Authenticate: Bearer`。axum 的 `.layer()` 只包住在它之前加入的路由:`/health` 加在 layer 之後才不受保護。
 - 不開 CORS;之後網頁介面要用時明確列出來源。
 - 同時呼叫數用 `Semaphore::try_acquire_owned`,拿不到就 429;**permit 跟著串流走**,串流結束才歸還。
 - token、API key 都是 `SecretString`;營運 log 不含內容(第一部分 §7 的四層規則照用)。

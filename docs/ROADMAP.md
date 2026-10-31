@@ -44,8 +44,9 @@
 - **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
 - **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
   設計已定案(D-017~D-025,`docs/modules/001-llm-gateway/design-part2.md`)。
-  第 10~16 步完成(`Alias`、`Retry`、`Record`、`JsonlWriter`、`config-loader`、gateway 設定與組裝、HTTP API);
-  下一步第 17 步:token、Host 檢查、body 上限、並行上限、逾時、優雅關機,`main` 開始真正啟動 server。
+  第 10~17 步完成(`Alias`、`Retry`、`Record`、`JsonlWriter`、`config-loader`、gateway 設定與組裝、HTTP API、
+  安全與上限、優雅關機);gateway 可以真正啟動,已用 curl 走過一次真的 Claude 呼叫。
+  下一步第 18 步:E2E 測試(真 server + wiremock)、gateway README、翻譯 benchmark。
   `.env` 已有 `GATEWAY_TOKEN`(2026-10-31 確認 gateway 讀得到)。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
