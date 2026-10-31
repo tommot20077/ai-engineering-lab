@@ -172,7 +172,8 @@ cheap   = "claude-haiku-5-5"
 
 [record]                   # 可省略
 enabled = true
-dir = "~/Library/Application Support/ai-engineering-lab/records"
+# dir = "./records"      # 預設 default_data_dir("gateway")/records,例如 macOS 的
+                         # ~/Library/Application Support/ai-engineering-lab/gateway/records
 
 [retry]                    # 可省略 → RetryPolicy::default()
 max_attempts = 3
@@ -252,6 +253,7 @@ max_concurrent = 16
 | `fastrand` | llm | jitter |
 | `axum` 0.8 | gateway | HTTP server |
 | `toml` | config-loader | 設定檔 |
+| `url` | gateway | 檢查 `anthropic.base_url`;reqwest 本來就依賴同一個版本,不多編譯 |
 | `subtle` | gateway | 固定時間比較 |
 | `tracing-subscriber` | gateway | 營運 log 輸出到 stderr |
 | `anyhow` | gateway | binary 的錯誤(CLAUDE.md 技術選型) |

@@ -52,6 +52,13 @@ uuid = { version = "1", features = ["v7", "serde"] }
 jiff = { version = "0.2", features = ["serde"] }
 # 設定檔格式(D-024)。Cargo 自己也用它,維護狀況好。
 toml = "1"
+# URL 解析。reqwest 本來就依賴它(同一個版本,不會多編譯),gateway 直接宣告來檢查 base_url。
+url = "2"
+# binary 用的錯誤型別:不必替每種錯誤定義 enum,`?` 一路往上丟,印出時帶完整的原因鏈。
+# library 用 thiserror(呼叫者要能 match),binary 用 anyhow(只需要印給人看)。
+anyhow = "1"
+# 把 tracing 事件印出來(binary 才裝;library 只發出事件)。env-filter:用 RUST_LOG 控制要印哪些。
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # 只在測試用的依賴。
 proptest = "1"

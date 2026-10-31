@@ -11,3 +11,5 @@
 CLAUDE.local.md
 # 呼叫紀錄(完整對話內容)預設放在專案外;萬一改到專案內,也不能進 git(D-021)。
 /records/
+# 個人的 gateway 設定;範例是 gateway.example.toml(D-024)。
+/gateway.toml
