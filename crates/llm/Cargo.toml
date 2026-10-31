@@ -18,11 +18,16 @@ reqwest.workspace = true
 futures.workspace = true
 async-stream.workspace = true
 secrecy.workspace = true
+# 只開計時器:Retry 等待用的 `tokio::time::sleep`(design-part2.md §14)。
+tokio = { workspace = true, features = ["time"] }
+fastrand.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 insta.workspace = true
-tokio.workspace = true
+# 測試多開:`#[tokio::test]` 需要 macros 與 runtime;test-util 讓測試裡的時間可以「暫停、快轉」。
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 wiremock.workspace = true
 dotenvy.workspace = true
 criterion.workspace = true

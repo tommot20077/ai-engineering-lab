@@ -85,7 +85,8 @@ pub async fn collect(mut events: EventStream, limits: Limits) -> Result<Response
 }
 
 /// 這個事件是不是「已經給使用者看到的內容」。
-fn is_output(event: &StreamEvent) -> bool {
+// `pub(crate)`:Retry 也用同一個定義決定「還能不能重試」,規則只寫在一個地方。
+pub(crate) fn is_output(event: &StreamEvent) -> bool {
     matches!(
         event,
         StreamEvent::TextDelta { .. }

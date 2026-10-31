@@ -6,8 +6,10 @@
 //! 只寫 `stream` 的話,`complete` 會走 trait 的預設方法,跳過裡面那一層覆寫的 `complete`。
 
 mod alias;
+mod retry;
 
 pub use alias::{Alias, AliasTable};
+pub use retry::{Retry, RetryPolicy};
 
 /// 組裝用的語法:`client.with_alias(table)`,讀起來像 provider 自己的方法。
 ///
@@ -18,6 +20,10 @@ pub use alias::{Alias, AliasTable};
 pub trait LlmProviderExt: crate::LlmProvider + Sized {
     fn with_alias(self, table: AliasTable) -> Alias<Self> {
         Alias::new(self, table)
+    }
+
+    fn with_retry(self, policy: RetryPolicy) -> Retry<Self> {
+        Retry::new(self, policy)
     }
 }
 

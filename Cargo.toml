@@ -40,11 +40,16 @@ futures = "0.3"
 async-stream = "0.3"
 # API key 的包裝型別:Debug 印 [REDACTED]、沒有 Display(design.md §7)。
 secrecy = "0.10"
+# async runtime。這裡不開任何功能,由各成員自己挑需要的(llm 只要計時器,測試另外開 macros 等)。
+tokio = { version = "1", default-features = false }
+# 隨機數,只用來產生 retry 的 jitter。小、沒有依賴,不需要密碼學等級的亂數。
+fastrand = "2"
+# 營運 log。library 只「發出」事件,要不要輸出、輸出到哪裡由 binary 決定。
+tracing = "0.1"
 
 # 只在測試用的依賴。
 proptest = "1"
 insta = { version = "1", features = ["json"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
 # 讀 .env 檔。只給 examples 和測試用:library 本身不讀檔案也不讀環境變數(D-016)。
 dotenvy = "0.15"

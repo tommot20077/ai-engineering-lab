@@ -30,7 +30,7 @@ pub use anthropic::{AnthropicClient, AnthropicConfig, DEFAULT_BASE_URL};
 pub use error::{LlmError, Result};
 pub use event::StreamEvent;
 pub use limits::Limits;
-pub use middleware::{Alias, AliasTable, LlmProviderExt};
+pub use middleware::{Alias, AliasTable, LlmProviderExt, Retry, RetryPolicy};
 pub use provider::{EventStream, LlmProvider, collect};
 pub use sse::{SseEvent, SseParser};
 pub use stop::{StopKind, StopReason};
