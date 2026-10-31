@@ -154,17 +154,38 @@ fn run(dir: &Path, receiver: Receiver<CallRecord>, dropped: &AtomicU64) {
             current = None;
         }
     }
+    // 正常關機:最後開著的檔案也要真的寫進磁碟。
+    if let Some(open) = current {
+        sync(open);
+    }
+}
+
+/// 把作業系統快取裡的資料真的寫進磁碟,然後關檔。
+///
+/// `write_all` 只把資料交給作業系統,過幾秒才會落地:程式當掉不會遺失,但整台電腦斷電可能遺失最後幾秒。
+/// 每筆都 sync 太慢(一次可能幾毫秒),所以只在換日與關機時各做一次(D-021)。
+// 參數是 `DayFile`(不是 `&DayFile`):sync 完這個檔案就交出去、函式結束時被丟掉(自動關檔)。
+fn sync(open: DayFile) {
+    // `sync_data`:只保證內容落地,不等檔案的修改時間等中繼資料,比 `sync_all` 快一點。
+    // Java 對照:`FileChannel.force(false)`。
+    if let Err(error) = open.file.sync_data() {
+        tracing::error!(%error, day = %open.day, "failed to sync call records to disk");
+    }
 }
 
 /// 把一筆紀錄寫成一行。換日時換檔。
 fn append(dir: &Path, current: &mut Option<DayFile>, record: &CallRecord) -> io::Result<()> {
     // 用紀錄自己的 started_at(UTC)決定檔名,不用寫入當下的時間:跨日可以直接測試。
     let day = record.started_at.strftime("%Y-%m-%d").to_string();
-    // `take()` 先把目前的檔案拿出來:同一天就放回去,不同天就丟掉(關檔)、開新的。
+    // `take()` 先把目前的檔案拿出來:同一天就放回去,不同天就 sync 後關掉、開新的。
     // `insert` 放回去並回傳裡面的 `&mut`,所以不需要再「確認它一定是 Some」。
     let open = match current.take() {
         Some(open) if open.day == day => current.insert(open),
-        _ => {
+        previous => {
+            // 換日(或第一次開檔、或上次寫入失敗後重開):前一天的檔案先確實落地再關。
+            if let Some(previous) = previous {
+                sync(previous);
+            }
             let file = open_day_file(&dir.join(format!("{day}.jsonl")))?;
             current.insert(DayFile { day, file })
         }

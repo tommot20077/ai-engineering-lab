@@ -134,6 +134,7 @@ pub trait RecordSink: Send + Sync {
   只支援 Unix(macOS / Linux)。
 - 一筆 = 先組好整行(含換行)再一次寫入;讀取端(007)跳過最後一行殘缺的資料,寫進 gateway README。
 - 開檔時若最後一個字元不是換行(上次當機留下半行),先補一個換行再寫,避免下一筆完整的紀錄黏在半行後面一起壞掉。
+- 換日與寫檔執行緒結束時各 `sync_data()` 一次:每筆都 sync 太慢;最多遺失斷電前最後幾秒。
 - 只依日期切檔,不依大小切(每天約數 MB);保留期限與壓縮留到 006 一起設計。
 - `shutdown(self)`:關閉佇列、寫完剩下的紀錄、等執行緒結束。
 
@@ -223,7 +224,9 @@ max_concurrent = 16
 - 同時呼叫數用 `Semaphore::try_acquire_owned`,拿不到就 429;**permit 跟著串流走**,串流結束才歸還。
 - token、API key 都是 `SecretString`;營運 log 不含內容(第一部分 §7 的四層規則照用)。
 - 紀錄是完整內容(D-017):放專案外、700/600;`.gitignore` 仍加 `/records/`。
-- 優雅關機:停止接受新連線 → 等進行中的請求(最多 30 秒)→ `JsonlWriter::shutdown()`。
+- 優雅關機:停止接受新連線 → 等進行中的請求(最多 30 秒)→ 丟掉 decorator 鏈 → 在阻塞執行緒上
+  `JsonlWriter::shutdown()`(`spawn_blocking`)。**一定要明確做**:`JsonlWriter` 的 `Drop` 會 `join` 寫檔執行緒,
+  不能在 tokio 工作執行緒上發生;而且 `main` 結束時其他執行緒上的物件不會執行 `Drop`,佇列裡的紀錄會直接遺失。
 
 ## 19. 測試
 
