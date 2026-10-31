@@ -40,8 +40,8 @@
 
 ## 目前位置
 
-- **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-033)。
-- **下一步**:002 第 1 步:`crates/eval` 骨架、`Case` / `Input`、讀資料集與檢查、SHA-256(design §12)。
+- **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-034)。
+- **下一步**:先補每週 cargo-mutants 第一次找到的 35 個 missed(A 補測試、C 寫理由排除),再做 002 第 1 步:`crates/eval` 骨架、`Case` / `Input`、讀資料集與檢查、SHA-256(design §12)。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入。
 - **最後更新**:2026-11-01
@@ -83,6 +83,7 @@
 | D-031 | eval 打分 = 確定性檢查 + LLM 評審;評分標準寫成逐條「通過 / 不通過」;評審輸出與被評的回答都當不可信輸入(格式錯記成 `Error`、回答放在隨機分隔標記之間) | 開放式回答沒有評審量不到品質;逐條判斷比 1~5 分穩定;評審也會被 prompt injection | 2026-11-01 |
 | D-032 | eval 分 `run`(呼叫模型)與 `score`(打分)兩階段;每次執行一個目錄(`meta.json` + JSONL);`compare` 依案例配對,用 paired bootstrap(固定種子)算通過率差的 95% 信賴區間 | 改評分或換評審不必重付 API 費用;JSONL 簡單、可 grep,不提早替 006 決定儲存;信賴區間是階段 2 要的統計證據 | 2026-11-01 |
 | D-033 | eval 直接用 `llm` library,套 Alias + Retry,不套 Record;不經過 gateway | eval 的題目不是真實使用,記進呼叫紀錄會污染階段 2 的訓練原料;不必先啟動 gateway | 2026-11-01 |
+| D-034 | eval 費用控制:事前估出最壞情況的費用、`--budget` 超過就不再送出新呼叫(沒有價格時拒絕執行);確定性檢查沒過就不叫評審;評審用低 effort、被評的回答放 prompt 最後吃 prompt cache。Batch API 與 Haiku 評審留待之後 | 費用大頭是評審(約是產生 Haiku 回答的 20 倍);eval 會反覆執行,超支要在送出前擋下 | 2026-11-01 |
 
 ## 模組
 
@@ -91,7 +92,7 @@
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
-| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 設計完成(D-029~D-033),實作中 |
+| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 設計完成(D-029~D-034),實作中 |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
@@ -138,7 +139,8 @@
 
 - **004 的範圍**:到 004 時再設計。做法以公開的技術為基礎從頭設計,目標是比使用者既有的實作更完整。
 - **Jev**:TypeSafe 的決策模型(非生成式,從固定選項挑一個並給機率)。目前資料多為第三方文章,
-  到 010 時先查官方文件確認 API 與用法。
+  到 010 時先查官方文件確認 API 與用法。也可以當 eval 的評審(二選一 + 機率,見 002 design §6 的 `Scorer`):
+  先跟 LLM 評審比較一致率,並確認它的費用與資料政策(私有資料集是真實對話)。
 - **011 灰度切換(重要,使用者要求記下)**:011 要在**執行中**依 Eval 結果改變流量分配
   (例如把 10% 的 `cheap` 切給小模型,品質下降自動切回),不能靠改設定檔重啟。到 011 時設計
   「執行中可替換的別名/路由表」與它的存放位置(檔案熱重載、資料庫或其他),以及變更的稽核紀錄。
