@@ -67,6 +67,23 @@ python3 scripts/mutate.py target/mutations.json -- cargo test -p gateway --lib
   - `NO-BUILD` / `SKIPPED`:mutation 本身寫錯,不算數,重寫。
 - 腳本一定會還原檔案;跑完用 `git status` 再確認一次。
 
+手寫的之後,再用 `cargo-mutants` 對這一步改到的 crate 跑一次(gateway 約 1 分鐘):
+
+```bash
+cargo mutants -p <crate> --output target --timeout 120 --jobs 3   # 結果在 target/mutants.out/
+cargo mutants -p <crate> --file <path> --output target/m2 ...      # 只重跑一個檔案
+```
+
+兩者互補:手寫的擅長**語意**(layer 順序、路由放在哪、permit 跟不跟著串流);
+cargo-mutants 擅長**機械式**的盲點(`>` 換 `>=` 的邊界、被忽略的欄位、格式化、常數)。
+把 `missed.txt` 裡的每一個分成三類,寫進導讀:
+
+- **A 測試缺口**:補測試,重跑確認抓到。
+- **B 單元測試碰不到**(例如 `main.rs`):記下來,由整合 / E2E 測試負責。
+- **C 等價或不值得測**:說明理由(例如函式結束時本來就會 drop、純輸出的常數)。
+
+`unviable` 是替換後編譯不過,不算數。
+
 ## 4. 全套檢查
 
 ```bash

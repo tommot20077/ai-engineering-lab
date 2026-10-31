@@ -354,6 +354,19 @@ mod tests {
     }
 
     #[test]
+    fn the_example_file_writes_down_the_real_defaults() {
+        // 範例檔把預設值寫成數字(10485760、1000…),程式的預設值是常數算出來的。
+        // 兩邊要一致:範例檔不能騙人,常數算錯(例如 `10 * 1024 * 1024` 寫成 `10 + 1024 * 1024`)也要被抓到。
+        // (cargo-mutants 找到的缺口:原本的預設值測試拿同一個常數比對,常數本身錯了看不出來。)
+        let example = settings(include_str!("../../../gateway.example.toml")).unwrap();
+        assert_eq!(example.bind, DEFAULT_BIND.parse().unwrap());
+        assert_eq!(example.retry, RetryPolicy::default());
+        assert_eq!(example.max_body_bytes, 10 * 1024 * 1024);
+        assert_eq!(example.max_body_bytes, DEFAULT_MAX_BODY_BYTES);
+        assert_eq!(example.max_concurrent, DEFAULT_MAX_CONCURRENT);
+    }
+
+    #[test]
     fn a_minimal_file_gets_safe_defaults() {
         let s = settings(MINIMAL).unwrap();
         assert_eq!(
@@ -474,6 +487,31 @@ mod tests {
     fn every_problem_is_reported_at_once() {
         let err = settings("[aliases]\n[retry]\nmax_attempts = 0\n").unwrap_err();
         assert_eq!(err.0.len(), 2, "{err}");
+    }
+
+    #[test]
+    fn the_error_message_lists_each_problem_on_its_own_line() {
+        // 使用者實際看到的就是這段文字(main 印出來的),格式也要測。
+        // (cargo-mutants 找到的缺口:只檢查了問題清單的內容,沒檢查印出來的樣子。)
+        let err = settings("[aliases]\n[retry]\nmax_attempts = 0\n").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "invalid gateway config:\n\
+             \x20 - [aliases] must define at least one alias\n\
+             \x20 - retry.max_attempts must be at least 1 (1 = no retries)"
+        );
+    }
+
+    #[test]
+    fn first_delay_may_equal_max_delay() {
+        // 邊界:相等是合法的(每次都等同樣久)。只有「大於」才是錯。
+        // (cargo-mutants 找到的缺口:`>` 改成 `>=` 時沒有測試失敗。)
+        let text =
+            "[aliases]\ncheap = \"x\"\n[retry]\nfirst_delay_ms = 2000\nmax_delay_ms = 2000\n";
+        assert_eq!(
+            settings(text).unwrap().retry.first_delay,
+            Duration::from_millis(2000)
+        );
     }
 
     #[test]

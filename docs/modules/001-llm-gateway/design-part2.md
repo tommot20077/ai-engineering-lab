@@ -275,7 +275,7 @@ max_concurrent = 16
 | 15 | `crates/gateway` 骨架:設定、啟動檢查、組裝 | binary crate、`anyhow`、serde 預設值、`deny_unknown_fields` | 單元 |
 | 16 | HTTP API:handlers、SSE、`ApiError` | axum extractor、`IntoResponse`、`Sse` | 整合(tower `oneshot`) |
 | 17 | 安全與上限:token、Host、body、並行、逾時、優雅關機 | middleware(`from_fn`)、`Semaphore`、`subtle` | 整合 |
-| 18 | E2E + gateway README + `gateway.example.toml` + 翻譯 benchmark | 起真 server | E2E、bench |
+| 18 | E2E(真的執行 binary + wiremock 假 Claude,含 SIGTERM 優雅關機)+ port 0 的 Host 修正 + gateway README + 翻譯 benchmark | 子行程、起真 server | E2E、bench |
 | 19 | 第二部分 retro | | |
 
 第 10~13 步都在 `crates/llm`,第 14 步是獨立的小 crate,axum 到第 16 步才出現。
