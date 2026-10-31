@@ -58,6 +58,9 @@ url = "2"
 axum = "0.8"
 # 固定時間比較:比對 token 時,不管哪裡不一樣都比完整串,花的時間一樣,防 timing attack(D-024)。
 subtle = "2"
+# 資料集內容的 hash(SHA-256,002 eval)。不用 std 的 `DefaultHasher`:它的演算法不保證跨 Rust 版本一樣,
+# 存起來的 hash 換了版本就對不上。不開預設功能:只需要算 hash,不需要 OID 之類的東西。
+sha2 = { version = "0.11", default-features = false }
 # 測試用:`ServiceExt::oneshot` 把一個請求直接丟給 router,不必開 port、不經過網路。
 tower = { version = "0.5", features = ["util"] }
 # binary 用的錯誤型別:不必替每種錯誤定義 enum,`?` 一路往上丟,印出時帶完整的原因鏈。

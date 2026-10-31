@@ -41,7 +41,7 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-034)。
-- **下一步**:002 第 1 步:`crates/eval` 骨架、`Case` / `Input`、讀資料集與檢查、SHA-256(design §12)。
+- **下一步**:002 第 2 步:`Scorer` trait + 確定性檢查(design §12)。第 1 步(`crates/eval` 骨架、`Case` / `Input`、讀資料集與檢查、SHA-256)完成。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
