@@ -90,7 +90,7 @@ pub fn assemble(settings: Settings, secrets: Secrets) -> Result<Gateway, Startup
 impl Gateway {
     /// 關機:丟掉 provider 鏈,再等紀錄寫完。
     ///
-    /// 會阻塞(等寫檔執行緒),不能在 tokio 工作執行緒上直接呼叫;第 17 步會包進 `spawn_blocking`(design-part2.md §18)。
+    /// 會阻塞(等寫檔執行緒),不能在 tokio 工作執行緒上直接呼叫;`main` 用 `spawn_blocking` 呼叫它(design-part2.md §18)。
     pub fn shutdown(self) {
         // provider 鏈裡的 Record 也持有一份 writer:先丟掉它,writer 才會只剩我們這一份。
         drop(self.provider);

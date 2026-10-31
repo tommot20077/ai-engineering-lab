@@ -695,6 +695,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "llm",
+ "reqwest",
  "secrecy",
  "serde",
  "serde_json",
@@ -707,6 +708,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "wiremock",
 ]
 
 [[package]]

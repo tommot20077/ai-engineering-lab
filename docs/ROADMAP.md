@@ -46,9 +46,9 @@
   設計已定案(D-017~D-025,`docs/modules/001-llm-gateway/design-part2.md`)。
   第 10~17 步完成(`Alias`、`Retry`、`Record`、`JsonlWriter`、`config-loader`、gateway 設定與組裝、HTTP API、
   安全與上限、優雅關機);gateway 可以真正啟動,已用 curl 走過一次真的 Claude 呼叫。
-  下一步第 18 步:E2E 測試(真 server + wiremock)、gateway README、翻譯 benchmark。第 18 步一併處理 cargo-mutants 的 B 類:
-  (1) 設定的 `anthropic.base_url` 要真的被使用(E2E 讓請求打到 wiremock);(2) 真的執行 gateway binary、送 SIGTERM,
-  驗證優雅關機與紀錄寫完;(3) `bind` 的 port 為 0 時,允許的 Host 要用實際綁到的 port(目前會全部 403)。
+  第 18 步進行中:E2E 已完成(`crates/gateway/tests/e2e.rs`,真的執行 binary + wiremock,含 SIGTERM 優雅關機;
+  port 0 的 Host 修正 `Settings::bound_to`)。cargo-mutants 的 B 類全部由 E2E 接手,剩下 2 個 C 類。
+  第 18 步還剩:gateway README、翻譯 benchmark。
   `.env` 已有 `GATEWAY_TOKEN`(2026-10-31 確認 gateway 讀得到)。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31

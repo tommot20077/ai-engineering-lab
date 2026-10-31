@@ -51,12 +51,18 @@ async fn main() -> Result<()> {
         Ok(config_loader::default_data_dir("gateway")?.join("records"))
     })?;
     let secrets = read_secrets()?;
-    let gateway = assemble(settings, secrets).context("cannot start the gateway")?;
+    let mut gateway = assemble(settings, secrets).context("cannot start the gateway")?;
 
     let listener = TcpListener::bind(gateway.settings.bind)
         .await
         .with_context(|| format!("cannot listen on {}", gateway.settings.bind))?;
+    // port 寫 0 時,實際的 port 要等綁定之後才知道;允許的 Host 也要跟著換(必須在建立 AppState 之前)。
+    let actual = listener
+        .local_addr()
+        .context("cannot read the listening address")?;
+    gateway.settings.bound_to(actual);
     print_summary(&file.dir.join(file_name(&config_path)), &gateway.settings);
+    // E2E 測試讀這一行取得 port:改格式要一起改 tests/e2e.rs。
     eprintln!(
         "listening on http://{} (Ctrl+C to stop)",
         gateway.settings.bind

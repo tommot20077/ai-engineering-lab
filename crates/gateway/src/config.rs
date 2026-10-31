@@ -200,6 +200,18 @@ impl Settings {
             _ => Err(InvalidConfig(problems)),
         }
     }
+
+    /// 開始聽之後,換成實際綁到的位址(design-part2.md §18)。
+    ///
+    /// `bind` 的 port 寫 0 = 讓作業系統挑一個空的 port(測試常用)。設定檔檢查時還不知道是哪一個,
+    /// 本機 bind 自動產生的允許 Host 會是 `127.0.0.1:0`,每個請求都會被 403。
+    /// 對外 bind 的 `allowed_hosts` 是使用者明確寫的,不動。
+    pub fn bound_to(&mut self, actual: SocketAddr) {
+        if actual.ip().is_loopback() {
+            self.allowed_hosts = loopback_hosts(actual.port());
+        }
+        self.bind = actual;
+    }
 }
 
 fn parse_bind(bind: &str, problems: &mut Vec<String>) -> Option<SocketAddr> {
@@ -228,11 +240,7 @@ fn allowed_hosts(
                     .into(),
             );
         }
-        return vec![
-            format!("127.0.0.1:{port}"),
-            format!("localhost:{port}"),
-            format!("[::1]:{port}"),
-        ];
+        return loopback_hosts(port);
     }
     // 對外開放要「寫兩次」才算數:防止為了測試隨手改成 0.0.0.0、之後忘了改回來。
     if !server.allow_remote {
@@ -245,6 +253,15 @@ fn allowed_hosts(
         );
     }
     server.allowed_hosts.clone()
+}
+
+/// 本機 bind 時允許的 `Host`:三種寫法都指向自己。
+fn loopback_hosts(port: u16) -> Vec<String> {
+    vec![
+        format!("127.0.0.1:{port}"),
+        format!("localhost:{port}"),
+        format!("[::1]:{port}"),
+    ]
 }
 
 fn check_aliases(aliases: &BTreeMap<String, String>, problems: &mut Vec<String>) {
@@ -386,6 +403,31 @@ mod tests {
                 max_concurrent: DEFAULT_MAX_CONCURRENT,
             }
         );
+    }
+
+    #[test]
+    fn port_zero_allows_the_port_the_os_picked() {
+        let mut s =
+            settings("[aliases]\ncheap = \"x\"\n[server]\nbind = \"127.0.0.1:0\"\n").unwrap();
+        assert_eq!(s.allowed_hosts[0], "127.0.0.1:0");
+
+        s.bound_to("127.0.0.1:54321".parse().unwrap());
+
+        assert_eq!(s.bind, "127.0.0.1:54321".parse().unwrap());
+        assert_eq!(
+            s.allowed_hosts,
+            ["127.0.0.1:54321", "localhost:54321", "[::1]:54321"]
+        );
+    }
+
+    #[test]
+    fn hosts_written_by_the_user_are_kept_after_binding() {
+        let remote = "[aliases]\ncheap = \"x\"\n[server]\nbind = \"0.0.0.0:8787\"\nallow_remote = true\nallowed_hosts = [\"gw.lan:8787\"]\n";
+        let mut s = settings(remote).unwrap();
+
+        s.bound_to("0.0.0.0:8787".parse().unwrap());
+
+        assert_eq!(s.allowed_hosts, ["gw.lan:8787"]);
     }
 
     #[test]

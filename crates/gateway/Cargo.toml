@@ -34,5 +34,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sig
 toml.workspace = true
 tempfile.workspace = true
 # 測試多開 test-util:暫停時間,逾時測試不必真的等。
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+# process + io-util:E2E 測試(tests/e2e.rs)啟動 gateway 子行程、一行一行讀它的 stderr。
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "process", "io-util"] }
 tower.workspace = true
+# E2E:真的 HTTP client 打真的 gateway;wiremock 扮演上游的 Claude。
+reqwest.workspace = true
+wiremock.workspace = true
