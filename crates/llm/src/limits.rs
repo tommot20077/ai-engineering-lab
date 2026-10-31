@@ -21,3 +21,21 @@ impl Default for Limits {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_the_documented_limits() {
+        // design.md §7:單一 SSE 事件 1 MiB、單次回應總量 32 MiB。寫成數字,常數算錯(例如 `*` 寫成 `+`)才抓得到。
+        // (cargo-mutants 找到的缺口:原本沒有任何測試在看預設值本身。)
+        assert_eq!(
+            Limits::default(),
+            Limits {
+                max_event_bytes: 1_048_576,
+                max_response_bytes: 33_554_432,
+            }
+        );
+    }
+}

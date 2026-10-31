@@ -382,6 +382,42 @@ mod tests {
     }
 
     #[test]
+    fn other_read_errors_are_not_mistaken_for_not_found() {
+        // 路徑存在但讀不了(這裡是目錄):不能說成「找不到」,否則使用者會被提示去複製範例檔,蓋掉自己的東西。
+        // (cargo-mutants:NotFound 的判斷換成 `true` 時沒有測試失敗。)
+        let tmp = tempfile::tempdir().unwrap();
+
+        let err = load_toml::<Example>(tmp.path()).unwrap_err();
+
+        assert!(matches!(&err, ConfigError::Read { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn default_data_dir_reads_the_real_environment() {
+        // 外層只是把真的環境變數接到內層(內層 `data_dir_for` 已經測過各種情況)。
+        // 這裡只讀、不改環境變數,所以不需要 unsafe 的 `set_var`。
+        // (cargo-mutants:外層換成回傳空路徑時沒有測試失敗。)
+        let dir = default_data_dir("unit-test-app").unwrap();
+        assert!(dir.is_absolute(), "{}", dir.display());
+        assert!(
+            dir.ends_with("ai-engineering-lab/unit-test-app"),
+            "{}",
+            dir.display()
+        );
+    }
+
+    #[test]
+    fn secret_env_reads_the_real_environment() {
+        // 一定存在的變數(PATH)與一定不存在的變數,各讀一次。(cargo-mutants:外層換成回傳空秘密時沒有測試失敗。)
+        let path = secret_env("PATH").unwrap();
+        assert_eq!(
+            Some(path.expose_secret()),
+            std::env::var("PATH").ok().as_deref()
+        );
+        assert!(secret_env("AI_LAB_TEST_SURELY_UNSET_7F3A").is_err());
+    }
+
+    #[test]
     fn missing_file_is_reported_as_not_found() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("nope.toml");

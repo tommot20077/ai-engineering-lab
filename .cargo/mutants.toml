@@ -9,4 +9,16 @@ exclude_re = [
     # 不值得測:非串流請求的總時間上限是 10 * 60 秒,換成 10 + 60 只是常數變了。
     # (`* with /` 會讓上限變成 0 秒,這個抓得到,不排除。)
     'crates/gateway/src/api\.rs:\d+:\d+: replace \* with \+',
+    # 等價:`shutdown(self)` 的內容就是 `drop(self)`;換成什麼都不做,`self` 在函式結束時一樣會被 drop。
+    'replace JsonlWriter::shutdown with \(\)',
+    # 等價(除非斷電):`sync_data` 只影響「斷電時最後幾秒會不會遺失」,檔案內容不變,黑箱測試看不到。
+    'crates/llm/src/middleware/record/jsonl\.rs:\d+:\d+: replace sync with \(\)',
+    # 只影響效能:同一天也每筆重新開檔(append 模式),檔案內容完全一樣,只是多了開檔與 sync。
+    'replace match guard open\.day == day with false in append',
+    # 不值得測:只改變「讀錯誤 body 時什麼時候停」。結果只有在第一個 chunk 比上限短時才不同,
+    # 而 chunk 怎麼切是網路堆疊決定的,wiremock 控制不了;截斷的上限本身另有測試(4096)。
+    'crates/llm/src/anthropic/client\.rs:\d+:\d+: replace >= with < in read_capped',
+    # 抓得到,但是靠逾時:`end -= 1` 換成 `end /= 1` 會變成無窮迴圈,測試要卡到逾時(2~5 分鐘)才失敗。
+    # 每週都多花這段時間,而且讓 exit code 變成 3(有逾時),新的逾時就看不出來了,所以排除。
+    'replace -= with /= in truncate_on_char_boundary',
 ]

@@ -271,9 +271,20 @@ mod tests {
     }
 
     #[test]
+    fn an_event_exactly_at_the_size_limit_is_accepted() {
+        // `data: 0123456789` 剛好 16 bytes:上限是「最多 16」,剛好等於要收。
+        // (cargo-mutants:`>` 換成 `>=` 或 `==` 時沒有測試失敗。)
+        let mut p = SseParser::with_max_event_bytes(16);
+        let events = p.feed(b"data: 0123456789\n\n").unwrap();
+        assert_eq!(events, [ev(None, "0123456789")]);
+    }
+
+    #[test]
     fn debug_hides_event_data() {
         let out = format!("{:?}", ev(Some("x"), "DATA-CANARY"));
         assert!(!out.contains("DATA-CANARY"), "{out}");
+        // 不洩漏之外,還要印得出有用的資訊(cargo-mutants:整個 `fmt` 換成什麼都不印,原本沒有測試失敗)。
+        assert_eq!(out, r#"SseEvent { event: Some("x"), data_bytes: 11 }"#);
     }
 
     // ---- property tests:讓 proptest 自動產生幾百組輸入 ----

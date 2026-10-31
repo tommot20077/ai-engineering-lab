@@ -258,4 +258,21 @@ mod tests {
             assert!(!out.contains("CANARY"), "content leaked: {out}");
         }
     }
+
+    #[test]
+    fn debug_shows_the_shape_without_the_content() {
+        // 遮罩之後還要看得出是哪種事件、多長:除錯時就靠這些。
+        // (cargo-mutants:`fmt`、`delta`、`block` 換成什麼都不印,原本沒有測試失敗。)
+        let delta = StreamEvent::TextDelta {
+            index: 0,
+            text: "你好".into(),
+        };
+        assert_eq!(format!("{delta:?}"), "TextDelta { index: 0, bytes: 6 }");
+        let start = StreamEvent::TextStart {
+            index: 1,
+            meta: ProviderMetadata::default(),
+        };
+        let out = format!("{start:?}");
+        assert!(out.starts_with("TextStart { index: 1, meta: "), "{out}");
+    }
 }

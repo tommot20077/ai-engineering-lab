@@ -445,6 +445,27 @@ mod tests {
         assert_eq!(inner.calls(), ["complete", "complete"]);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn complete_also_gives_up_after_max_attempts() {
+        // `complete` 有自己的重試迴圈:次數沒有往上加的話,它會永遠重試下去。
+        // (cargo-mutants:`attempt += 1` 換成 `-=` / `*=` 時沒有測試失敗;stream 那條路有測,這條沒有。)
+        let inner = Attempts::new(vec![
+            vec![Err(overloaded)],
+            vec![Err(overloaded)],
+            vec![Err(|| LlmError::http(503, None, ""))],
+            answer(),
+        ]);
+        let p = Arc::clone(&inner).with_retry(RetryPolicy::default());
+
+        let error = tokio::time::timeout(Duration::from_secs(60), p.complete(request()))
+            .await
+            .expect("應該在第 3 次之後放棄,而不是一直重試")
+            .unwrap_err();
+
+        assert_eq!(status(&error), Some(503));
+        assert_eq!(inner.calls(), ["complete", "complete", "complete"]);
+    }
+
     #[test]
     fn backoff_cap_doubles_and_stops_at_max_delay() {
         let policy = RetryPolicy::default();

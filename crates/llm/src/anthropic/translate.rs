@@ -669,6 +669,86 @@ mod tests {
     }
 
     #[test]
+    fn a_signature_on_the_block_start_is_kept() {
+        // 簽章也可能直接放在 content_block_start 裡,後面沒有 signature_delta。
+        // (cargo-mutants:`!signature.is_empty()` 拿掉 `!` 時沒有測試失敗:原本的測試開頭都是空簽章。)
+        let mut raw = vec![
+            message_start(),
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "", "signature": "sig-start" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+        ];
+        raw.extend(message_end("end_turn"));
+        let events = translate_all(raw).unwrap();
+        assert_eq!(
+            events[2],
+            StreamEvent::ThinkingEnd {
+                index: 0,
+                meta: signed("sig-start")
+            }
+        );
+    }
+
+    #[test]
+    fn every_known_stop_reason_has_its_own_kind() {
+        // 對照表的每一列都要測:少了一列,那個原因就會默默變成 Unknown。
+        // (cargo-mutants:刪掉 `max_tokens`、`stop_sequence`、`pause_turn` 的分支時沒有測試失敗。)
+        for (raw, kind) in [
+            ("end_turn", StopKind::EndTurn),
+            ("max_tokens", StopKind::MaxTokens),
+            ("stop_sequence", StopKind::StopSequence),
+            ("tool_use", StopKind::ToolUse),
+            ("refusal", StopKind::Refusal),
+            ("pause_turn", StopKind::PauseTurn),
+            ("brand_new", StopKind::Unknown),
+        ] {
+            let stop = stop_reason(raw.into());
+            assert_eq!((stop.kind, stop.raw.as_str()), (kind, raw));
+        }
+    }
+
+    #[test]
+    fn every_known_stream_error_maps_to_its_http_status() {
+        // 串流中途的錯誤換成 HTTP 狀態碼,「能不能重試」才只需要一套規則;對照錯了,401 會被當成可以重試的 500。
+        // (cargo-mutants:刪掉 `api_error` 的六個分支時都沒有測試失敗。)
+        for (kind, expected) in [
+            ("invalid_request_error", 400),
+            ("authentication_error", 401),
+            ("permission_error", 403),
+            ("not_found_error", 404),
+            ("request_too_large", 413),
+            ("rate_limit_error", 429),
+            ("overloaded_error", 529),
+            ("api_error", 500),
+            ("brand_new_error", 500),
+        ] {
+            let error = api_error(WireError {
+                kind: kind.into(),
+                message: "m".into(),
+            });
+            assert!(
+                matches!(error, LlmError::Http { status, .. } if status == expected),
+                "{kind}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_successful_tool_result_omits_is_error() {
+        // `is_error: false` 不送出(Anthropic 的預設就是 false);只有 true 才送。
+        // (cargo-mutants:`is_false` 換成永遠回 false 時沒有測試失敗:snapshot 裡只有 `is_error: true`。)
+        let req = base_request(vec![user(vec![Content::ToolResult {
+            call_id: "toolu_1".into(),
+            content: "ok".into(),
+            is_error: false,
+        }])]);
+        let body = serde_json::to_value(request_body(&req).unwrap()).unwrap();
+        assert_eq!(
+            body["messages"][0]["content"][0],
+            json!({ "type": "tool_result", "tool_use_id": "toolu_1", "content": "ok" })
+        );
+    }
+
+    #[test]
     fn thinking_signature_arrives_on_thinking_end() {
         let mut raw = vec![
             message_start(),

@@ -163,7 +163,9 @@ async fn auth_failure_is_not_retryable_and_body_is_capped() {
     else {
         panic!("expected 401, got {err:?}")
     };
-    assert!(body.len() <= 4096, "body not capped: {} bytes", body.len());
+    // 剛好截在 4096:不只要有上限,body 本身也要留下來給人看。
+    // (cargo-mutants:`read_capped` 換成回傳空字串時沒有測試失敗,因為原本只檢查 `<= 4096`。)
+    assert_eq!(body, "x".repeat(4096));
 }
 
 #[tokio::test]

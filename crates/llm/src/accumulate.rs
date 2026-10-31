@@ -636,4 +636,23 @@ mod tests {
         });
         assert!(matches!(r, Err(LlmError::Protocol(_))));
     }
+
+    #[test]
+    fn output_exactly_at_the_size_limit_is_accepted() {
+        // 上限是「最多 8 bytes」:剛好 8 要收,9 才拒絕。(cargo-mutants:`>` 換成 `>=` 時沒有測試失敗。)
+        let mut acc = Accumulator::with_max_bytes(8);
+        acc.push(start()).unwrap();
+        acc.push(StreamEvent::TextStart {
+            index: 0,
+            meta: meta(),
+        })
+        .unwrap();
+        for piece in ["12345", "678"] {
+            acc.push(StreamEvent::TextDelta {
+                index: 0,
+                text: piece.into(),
+            })
+            .unwrap();
+        }
+    }
 }

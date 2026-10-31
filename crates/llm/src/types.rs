@@ -352,6 +352,13 @@ mod tests {
     }
 
     #[test]
+    fn content_debug_shows_the_length_instead_of_the_text() {
+        // (cargo-mutants:`Content` 的 `fmt` 換成什麼都不印,原本沒有測試失敗。)
+        let out = format!("{:?}", text("你好"));
+        assert!(out.starts_with("Text { bytes: 6, meta: "), "{out}");
+    }
+
+    #[test]
     fn provider_metadata_debug_shows_keys_but_not_values() {
         let mut meta = ProviderMetadata::default();
         meta.insert("anthropic", json!({ "user_id": "VALUE-CANARY" }));

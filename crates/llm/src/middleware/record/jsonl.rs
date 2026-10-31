@@ -280,6 +280,9 @@ mod tests {
         let writer = JsonlWriter::start(&dir, DEFAULT_QUEUE_CAPACITY).unwrap();
         writer.submit(late.clone());
         writer.submit(early.clone());
+        // 正常的情況一筆都沒丟。(cargo-mutants:`dropped` 換成永遠回 1 時沒有測試失敗;
+        // 原本只有「丟了一筆」的測試,剛好等於 1。)
+        assert_eq!(writer.dropped(), 0);
         writer.shutdown();
 
         // 檔名看的是紀錄的 started_at(UTC),不是寫入當下的時間:跨日可以這樣直接測。
