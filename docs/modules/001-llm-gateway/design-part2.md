@@ -122,6 +122,7 @@ pub trait RecordSink: Send + Sync {
 **運作**:Record 邊抄邊傳,不扣事件;用 `Accumulator` 收一份副本。結束時依情況決定 `outcome`:
 收到 `Finish` → ok;輸出前出錯 → error;輸出後出錯 → interrupted;**串流被丟掉**(使用者取消)→ cancelled,
 用 `Drop` 送出。每筆只送一次。
+裡面那一層吐出不合協定的事件時,Record 照樣轉送(它只是旁觀者),但這筆記成 error、不附回應。
 
 **JsonlWriter**:
 
