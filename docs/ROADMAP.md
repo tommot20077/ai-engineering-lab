@@ -43,7 +43,7 @@
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
 - **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
 - **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
-  待決定:token 與設定檔。
+  設計分岔全部決定(D-017~D-024),整理成 `docs/modules/001-llm-gateway/design-part2.md` 待審核。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
 
@@ -74,6 +74,7 @@
 | D-021 | 呼叫紀錄:(1) 一筆含 schema_version、UUID v7 id、別名與 served model、完整 request/response、outcome(ok/error/interrupted/cancelled)、usage、首字延遲與總延遲;失敗與取消也記(2) JSONL、每天(UTC)一個檔;預設放專案外(macOS `~/Library/Application Support/ai-engineering-lab/records`),由 gateway.toml 設定、啟動時印出位置;目錄 700、檔案建立時即 600;`.gitignore` 仍加 `/records/`(3) 啟動時檢查目錄可寫,不行就拒絕啟動;執行中寫入失敗不影響回答,但記 ERROR 並累計遺失數;一筆一次寫入整行,讀取端跳過殘行(4) Record 邊抄邊傳不扣事件,結束(含 Drop 取消)時把紀錄丟進有上限的 channel,由單一背景 writer 寫檔;佇列滿則丟棄並報錯;關機前清空佇列 | 飛輪要完整配對,過濾容易但沒記就找不回;JSONL 寫入與整批讀取最簡單,查詢需求到 006 再匯入;專案外避免 `git clean -fdx` 誤刪與工具誤讀;記錄是附帶工作,不能拖垮回答也不能悄悄失敗 | 2026-10-31 |
 | D-022 | Retry 預設:最多 3 次嘗試;指數退避 + full jitter(第一次上限 1 秒、每次加倍、最長 10 秒),測試用 tokio 暫停時間;有 `retry-after` 就照它,但超過最長上限就不等、直接回傳錯誤;數值放 `RetryPolicy::default()`,可由 gateway.toml 覆寫 | 伺服器端 fallback 已處理多數過載;越等越久給對方喘息、隨機避免同時重試;對話情境不宜久等,把長時間不可用交給上層(之後 010 可改路由) | 2026-10-31 |
 | D-023 | gateway 原生 HTTP API:(1) `POST /v1/chat` 回完整 `Response` JSON、`POST /v1/chat/stream` 回 SSE,body 就是 `Request`(2) SSE 每則 `event: <type>` + `data: <StreamEvent JSON>`,meta 原樣傳出;中途出錯送 `error` 事件後關閉;沒有 finish/error 就斷線視為中斷;每 15 秒送 `: keep-alive`;不送 `[DONE]`(3) 錯誤轉成對呼叫者有意義的狀態碼(上游 401/403 → 502、429 → 429 附 Retry-After、逾時 → 504、其餘上游 → 502);統一 body `{"error":{kind,message,retryable}}`,上游 body 只在 400 時附上;串流端點等第一個項目再決定狀態碼;`Interrupted` 附 partial(4) `GET /health`(含遺失紀錄數)、`GET /v1/models`(別名清單);body 上限 10 MiB、同時上游呼叫 16(超過回 429 gateway_busy)、非串流總時間 10 分鐘;優雅關機 30 秒並清空紀錄佇列;未知別名回 400(Alias 嚴格模式由 constructor 決定) | 每個端點只有一種回應格式,body 直接用現成型別;沿用自家 SseParser/StreamEvent 可 dogfooding;狀態碼要告訴呼叫者該怎麼辦;別名表是成本與換模型的控制點 | 2026-10-31 |
+| D-024 | gateway 強制使用 token:隨機固定 token(非 JWT)放 `.env` 的 `GATEWAY_TOKEN`、包 `SecretString`、固定時間比較(`subtle`)、沒設定就拒絕啟動;另檢查 `Host` header 擋 DNS rebinding、不開 CORS。設定檔用 TOML:`gateway.example.toml` 進 git、`gateway.toml` 不進;秘密只放 `.env`;`deny_unknown_fields` 與數值、目錄、bind 位址全部在啟動時檢查,非本機 bind 需明確 `allow_remote = true`;別名先放設定檔(改動頻率低),執行中可替換的表留到 011 | 本機連得到 ≠ 只有本人(瀏覽器、其他程式);單一使用者用 JWT 只增加金鑰與過期管理的風險;TOML 型別明確、是 Rust 慣例,YAML 有隱式型別陷阱且主流 serde 函式庫已封存;設定錯誤要在啟動時擋下 | 2026-10-31 |
 
 ## 模組
 
@@ -96,7 +97,7 @@
 | 008 | LoRA / QLoRA 微調學徒模型(MLX) | Python 模型 | — |
 | 009 | 小模型推論服務(MLX-LM / llama.cpp,OpenAI 相容) | Python 模型 | — |
 | 010 | 路由器:Jev(現成決策模型)、自己訓練的分類模型、規則,三者用 Eval 比較 | Rust 服務 + Python 模型 | — |
-| 011 | 灰度切換與自動回滾(依 Eval 統計證據決定) | Rust 服務 | — |
+| 011 | 灰度切換與自動回滾(依 Eval 統計證據決定;**需要執行中可替換的別名/路由表**,見待辦) | Rust 服務 | — |
 
 **比較基準要包含 Haiku**:自己蒸餾的學徒模型,在品質與成本上必須贏過「直接把簡單請求交給
 `claude-haiku-5-5`」(比 Sonnet 便宜約 20 倍);贏不過的話,飛輪就沒有意義,直接路由給 Haiku 即可。
@@ -130,10 +131,12 @@
 - **004 的範圍**:到 004 時再設計。做法以公開的技術為基礎從頭設計,目標是比使用者既有的實作更完整。
 - **Jev**:TypeSafe 的決策模型(非生成式,從固定選項挑一個並給機率)。目前資料多為第三方文章,
   到 010 時先查官方文件確認 API 與用法。
-- **模型別名(設計 `crates/gateway` 時決定)**:不要每多一種用途就加一個環境變數。提案是在
-  `gateway.toml` 定義具名別名(例如 `default`、`cheap`、`judge`),請求寫別名、gateway 換成真正的
-  model ID;換模型只改設定檔、不改程式。「依請求內容動態挑模型」是 010 路由器的工作。
-  目前只有兩個變數:`LLM_MODEL`(範例)、`LIVE_MODEL`(live test,預設 Haiku)。
+- **011 灰度切換(重要,使用者要求記下)**:011 要在**執行中**依 Eval 結果改變流量分配
+  (例如把 10% 的 `cheap` 切給小模型,品質下降自動切回),不能靠改設定檔重啟。到 011 時設計
+  「執行中可替換的別名/路由表」與它的存放位置(檔案熱重載、資料庫或其他),以及變更的稽核紀錄。
+  001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
+- **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
+  `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 
 ## 想法池(還沒排進模組)
 
