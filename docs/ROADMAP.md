@@ -40,18 +40,11 @@
 
 ## 目前位置
 
-- **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
-- **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
-- **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
-  設計已定案(D-017~D-025,`docs/modules/001-llm-gateway/design-part2.md`)。
-  第 10~17 步完成(`Alias`、`Retry`、`Record`、`JsonlWriter`、`config-loader`、gateway 設定與組裝、HTTP API、
-  安全與上限、優雅關機);gateway 可以真正啟動,已用 curl 走過一次真的 Claude 呼叫。
-  第 18 步完成:E2E(`crates/gateway/tests/e2e.rs`,真的執行 binary + wiremock,含 SIGTERM 優雅關機)、
-  port 0 的 Host 修正、gateway README、翻譯 benchmark(`bench-internals` feature,D-028;長回答全程約 0.5 ms,不需要優化)。
-  下一步第 19 步:第二部分 retro。
-  `.env` 已有 `GATEWAY_TOKEN`(2026-10-31 確認 gateway 讀得到)。
-  第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
-- **最後更新**:2026-10-31
+- **模組**:001 LLM Gateway — **完成**(2026-11-01)。設計 `design.md`、`design-part2.md`;回顧 `retro.md`(兩部分)。
+  `crates/llm`(provider、decorator、紀錄)、`crates/config-loader`、`crates/gateway`(HTTP 服務,README 有用法)。
+- **下一步**:跟使用者決定下一個模組(依 ROADMAP 順序是 002 Eval Harness),先寫 design。
+  第二部分回顧帶出兩件小事可以先做:repo 根目錄 README、cargo-mutants 每週排程(見待辦)。
+- **最後更新**:2026-11-01
 
 ## 決策
 
@@ -92,7 +85,7 @@
 
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
-| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 第一部分完成(9/9);gateway 待設計 |
+| 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | — |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
@@ -147,6 +140,9 @@
   001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
 - **呼叫紀錄的保留期限與壓縮(006 一起設計)**:目前只依 UTC 日期切檔,不依大小切(每天約數 MB)。
   到 006 時決定舊檔多久壓縮、多久刪除,以及要不要匯入 DuckDB / SQLite 查詢。
+- **repo 根目錄 README(001 回顧帶出)**:公開專案還沒有入口頁。內容:這是什麼、三層架構、模組清單與狀態、怎麼跑起來。
+- **cargo-mutants 每週排程(D-027,001 回顧帶出)**:GitHub Actions 排程 + 手動觸發,只回報不擋;
+  先用 `.cargo/mutants.toml` 排除已說明的等價 mutant(`Gateway::shutdown`、`CHAT_TIMEOUT` 常數)。
 - **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
   `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 
