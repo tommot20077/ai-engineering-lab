@@ -40,10 +40,10 @@
 
 ## 目前位置
 
-- **模組**:001 LLM Gateway — **完成**(2026-11-01)。設計 `design.md`、`design-part2.md`;回顧 `retro.md`(兩部分)。
-  `crates/llm`(provider、decorator、紀錄)、`crates/config-loader`、`crates/gateway`(HTTP 服務,README 有用法)。
-- **下一步**:跟使用者決定下一個模組(依 ROADMAP 順序是 002 Eval Harness),先寫 design。
-  第二部分回顧帶出的兩件小事都完成了:repo 根目錄 README、cargo-mutants 每週排程(`.github/workflows/mutants.yml`)。
+- **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-033)。
+- **下一步**:002 第 1 步:`crates/eval` 骨架、`Case` / `Input`、讀資料集與檢查、SHA-256(design §12)。
+- **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
+  cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入。
 - **最後更新**:2026-11-01
 
 ## 決策
@@ -78,6 +78,11 @@
 | D-026 | 開發工具:專案 skill `lab-step` 規範每一步流程;`scripts/check.sh`(與 CI 相同的檢查)、`scripts/mutate.py`(手寫 mutation,區分 CAUGHT / MISSED / WRONG-TEST / NO-BUILD);私有資料掃描改由 git hook 強制(`.githooks/` + `scripts/private-scan.sh`,關鍵字在 gitignore 的 `.private-patterns`)。使用者層級:GSD skill 全域關閉(只留 `gsd-surface` 以便恢復)、安裝 `find-skills`(安裝任何 skill 前先讀過內容) | 流程靠描述會每次做得不一樣;「絕對不能漏」的規則要由 hook 強制而不是靠記得;手寫 mutation 腳本每次重寫容易出錯 | 2026-10-31 |
 | D-027 | 導入 cargo-mutants:每一步在手寫 mutation 之後,對改到的 crate 跑一次,`missed` 分成 A 測試缺口 / B 單元測試碰不到 / C 等價或不值得測;CI 不在每次 push 跑(冷編譯太慢、結果要人判斷),改成每週排程只回報(`.github/workflows/mutants.yml`,2026-11-01 加入);說明過理由的 C 類排除在 `.cargo/mutants.toml` | 第一次對 gateway 試跑:92 個 mutant、68 秒,找出 4 個手寫 mutation 漏掉的真缺口(`base_url` 被忽略、`>`/`>=` 邊界、錯誤訊息格式、預設值常數);兩者互補 | 2026-10-31 |
 | D-028 | 量內部函式的 benchmark:cargo feature(`bench-internals`)後面放 `#[doc(hidden)] pub mod bench` 薄包裝,只用中立型別;`[[bench]]` 設 `required-features`;CI 與 `check.sh` 的 clippy 另外跑 `--all-features`、test 用 `--all-features` | 只量公開 API 會量到 HTTP 雜訊;直接公開內部模組會打破封裝;feature 後面的程式不被編譯就會默默壞掉 | 2026-10-31 |
+| D-029 | 002 第一版只評估「一次 LLM 呼叫」;資料集、結果、統計、比較做成跟領域無關的通用部分;輸入與輸出用 enum(之後加 `Agent`、`Retrieval` variant),打分器用 trait | agent 與檢索的型別要等 003、004 才知道,現在設計是用猜的;通用的部分以後直接用,加 variant 時 compiler 會列出要改的地方 | 2026-11-01 |
+| D-030 | eval 資料集分兩層:手寫的公開資料集放 `evals/`(進 git);從呼叫紀錄來的真實案例放 repo 外的資料目錄(700/600),`eval add` 只寫私有資料集 | 真實案例是完整的個人對話,不能進公開 repo;公開資料集讓 CI smoke 與別人 clone 後有東西可跑 | 2026-11-01 |
+| D-031 | eval 打分 = 確定性檢查 + LLM 評審;評分標準寫成逐條「通過 / 不通過」;評審輸出與被評的回答都當不可信輸入(格式錯記成 `Error`、回答放在隨機分隔標記之間) | 開放式回答沒有評審量不到品質;逐條判斷比 1~5 分穩定;評審也會被 prompt injection | 2026-11-01 |
+| D-032 | eval 分 `run`(呼叫模型)與 `score`(打分)兩階段;每次執行一個目錄(`meta.json` + JSONL);`compare` 依案例配對,用 paired bootstrap(固定種子)算通過率差的 95% 信賴區間 | 改評分或換評審不必重付 API 費用;JSONL 簡單、可 grep,不提早替 006 決定儲存;信賴區間是階段 2 要的統計證據 | 2026-11-01 |
+| D-033 | eval 直接用 `llm` library,套 Alias + Retry,不套 Record;不經過 gateway | eval 的題目不是真實使用,記進呼叫紀錄會污染階段 2 的訓練原料;不必先啟動 gateway | 2026-11-01 |
 
 ## 模組
 
@@ -86,7 +91,7 @@
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
-| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | — |
+| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 設計完成(D-029~D-033),實作中 |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |

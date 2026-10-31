@@ -32,7 +32,7 @@ Python 模型層  微調 · embedding / reranker · 推論服務
 | # | 模組 | 狀態 |
 |---|---|---|
 | 001 | **LLM Gateway**:provider 抽象、串流、重試、呼叫紀錄、本機 HTTP 服務 | ✅ 完成 |
-| 002 | Eval Harness:用真實案例累積測試集、打分、看趨勢 | 下一個 |
+| 002 | Eval Harness:用真實案例累積測試集、打分、看趨勢 | 設計完成([design](docs/modules/002-eval-harness/design.md)) |
 | 003 | Agent runtime + tool calling + MCP | 規劃中 |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | 規劃中 |
 | 005 | 個人助理應用(把 001~004 組起來) | 規劃中 |
