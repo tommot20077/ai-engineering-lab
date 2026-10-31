@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 pub use alias::{Alias, AliasTable};
 pub use record::{CallRecord, Latency, Outcome, Record, RecordSink, RecordedError, SCHEMA_VERSION};
+#[cfg(unix)]
+pub use record::{DEFAULT_QUEUE_CAPACITY, JsonlWriter};
 pub use retry::{Retry, RetryPolicy};
 
 /// 組裝用的語法:`client.with_alias(table)`,讀起來像 provider 自己的方法。

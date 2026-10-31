@@ -44,7 +44,7 @@
 - **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
 - **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
   設計已定案(D-017~D-025,`docs/modules/001-llm-gateway/design-part2.md`)。
-  第 10~12 步完成(blanket impl、`LlmProviderExt`、`Alias`、`Retry`、`Record`);下一步第 13 步 `JsonlWriter`。
+  第 10~13 步完成(`Alias`、`Retry`、`Record`、`JsonlWriter`);下一步第 14 步 `crates/config-loader`。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
 
@@ -137,6 +137,8 @@
   (例如把 10% 的 `cheap` 切給小模型,品質下降自動切回),不能靠改設定檔重啟。到 011 時設計
   「執行中可替換的別名/路由表」與它的存放位置(檔案熱重載、資料庫或其他),以及變更的稽核紀錄。
   001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
+- **呼叫紀錄的保留期限與壓縮(006 一起設計)**:目前只依 UTC 日期切檔,不依大小切(每天約數 MB)。
+  到 006 時決定舊檔多久壓縮、多久刪除,以及要不要匯入 DuckDB / SQLite 查詢。
 - **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
   `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 

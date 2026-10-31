@@ -1,5 +1,8 @@
 //! 每次呼叫留下一筆完整紀錄,階段 2 資料飛輪的原料(design-part2.md §15、D-020、D-021)。
 
+// 寫檔要用 Unix 專用的權限 API;其他平台不編譯這個模組,library 其餘部分照常可用。
+#[cfg(unix)]
+mod jsonl;
 mod model;
 
 use std::sync::Arc;
@@ -18,6 +21,8 @@ use crate::event::StreamEvent;
 use crate::provider::{EventStream, LlmProvider, is_output};
 use crate::types::{Request, Response};
 
+#[cfg(unix)]
+pub use jsonl::{DEFAULT_QUEUE_CAPACITY, JsonlWriter};
 pub use model::{CallRecord, Latency, Outcome, RecordedError, SCHEMA_VERSION};
 
 /// 紀錄要送去哪裡。這是擴展點(儲存後端):目前有 JSONL 檔案,測試用記憶體。
