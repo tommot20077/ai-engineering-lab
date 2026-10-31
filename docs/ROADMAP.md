@@ -48,7 +48,8 @@
   安全與上限、優雅關機);gateway 可以真正啟動,已用 curl 走過一次真的 Claude 呼叫。
   第 18 步進行中:E2E 已完成(`crates/gateway/tests/e2e.rs`,真的執行 binary + wiremock,含 SIGTERM 優雅關機;
   port 0 的 Host 修正 `Settings::bound_to`)。cargo-mutants 的 B 類全部由 E2E 接手,剩下 2 個 C 類。
-  第 18 步還剩:gateway README、翻譯 benchmark。
+  gateway README 完成。第 18 步還剩:翻譯 benchmark(使用者選方案 A:`bench-internals` feature 底下的
+  `#[doc(hidden)] pub mod bench` 薄包裝)。
   `.env` 已有 `GATEWAY_TOKEN`(2026-10-31 確認 gateway 讀得到)。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
