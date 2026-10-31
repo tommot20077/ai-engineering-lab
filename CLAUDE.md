@@ -81,6 +81,10 @@ Go 專案的規劃文件 : 程式 ≈ 17 : 1,拖慢學習回饋,所以這裡不�
 - 跨模組的決策記在 `docs/ROADMAP.md` 的決策表。
 - **每一步做完自動 commit + push(D-015)**:fmt、clippy、測試、私有資料掃描全部通過後,
   Claude 直接 commit 並 push,然後給導讀;使用者只在設計決策時參與。有問題就在下一個 commit 修。
+- **每一步照 `lab-step` skill 走**(`.claude/skills/lab-step/`):TDD → 空殼上確認失敗 → 實作 →
+  mutation 檢查(`scripts/mutate.py`)→ `scripts/check.sh` → 文件 → commit / push / CI → 導讀。
+- **私有資料掃描由 git hook 強制**(`.githooks/`,新 clone 先跑 `scripts/install-hooks.sh`):
+  pre-commit 掃暫存區、commit-msg 掃訊息。關鍵字在 gitignore 的 `.private-patterns`。不准用 `--no-verify` 繞過。
 
 ## 技術選型(預設,遇到再確認)
 

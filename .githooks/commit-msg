@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# commit 訊息也不能帶私有資料。
+exec "$(git rev-parse --show-toplevel)/scripts/private-scan.sh" --message "$1"

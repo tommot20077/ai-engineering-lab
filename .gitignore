@@ -13,3 +13,5 @@ CLAUDE.local.md
 /records/
 # 個人的 gateway 設定;範例是 gateway.example.toml(D-024)。
 /gateway.toml
+# 私有資料掃描的關鍵字(一行一個正規表示式),只存在本機。見 scripts/private-scan.sh。
+/.private-patterns

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# commit 前掃描暫存區:私有資料或秘密一出現就擋下(CLAUDE.md「私有資料」)。
+# 安裝:scripts/install-hooks.sh(每個 clone 做一次)。
+exec "$(git rev-parse --show-toplevel)/scripts/private-scan.sh" --staged
