@@ -37,6 +37,28 @@ pub trait LlmProvider: Send + Sync {
     }
 }
 
+/// 「裝在 `Arc` 裡的 provider,本身也是 provider」(design-part2.md §12、D-019)。
+///
+/// 有了它,decorator 的模具 `Alias<P>` 才能填進 `Arc<dyn LlmProvider>`,
+/// gateway 也才能依設定檔在執行期一層層組裝。
+// 這叫 blanket impl:一次替「所有」`Arc<T>` 實作,只要 T 是 provider。
+// Java 做不到這件事:不能事後讓 JDK 的類別(這裡的 `Arc`)去 implement 你自己的介面。
+// `?Sized`:泛型的 T 預設必須在編譯期知道大小;`dyn LlmProvider` 的大小不固定(可能是任何實作),
+// 加上 `?Sized` 才涵蓋它。少了它,這個 impl 偏偏對最需要的 `Arc<dyn LlmProvider>` 無效。
+impl<T: LlmProvider + ?Sized> LlmProvider for std::sync::Arc<T> {
+    fn stream(&self, request: Request) -> EventStream {
+        // `self` 是 `&Arc<T>`,`*self` 是 `Arc<T>`,`**self` 是裡面的 T:打開盒子交給它。
+        // 不能寫 `self.stream(request)`:那會呼叫這個函式自己,變成無窮遞迴。
+        (**self).stream(request)
+    }
+
+    // 一定要轉發:裡面的 provider 可能覆寫了 `complete`(`AnthropicClient` 用自己的 `Limits`)。
+    // 不寫的話,`Arc` 會悄悄改用 trait 的預設方法,上限變回預設值,編譯器不會提醒。
+    fn complete(&self, request: Request) -> BoxFuture<'_, Result<Response>> {
+        (**self).complete(request)
+    }
+}
+
 /// 把事件流收集成完整的回應,並套用 design.md §6 的中途失敗規則:
 /// 還沒輸出任何內容就失敗 → 原本的錯誤(可能可以重試);已經輸出過才失敗 → `Interrupted`(不可重試)。
 // `async fn`:呼叫它不會馬上執行,而是回傳一個 Future,要 `.await` 才會跑。
@@ -130,6 +152,64 @@ mod tests {
     fn provider_is_usable_as_a_trait_object() {
         // 能編譯就代表 trait 是 dyn-compatible:gateway 才能在執行期挑 provider。
         let _: Arc<dyn LlmProvider> = Arc::new(Scripted(vec![]));
+    }
+
+    /// 覆寫了 `complete` 的 provider,就像 `AnthropicClient`(它用自己的 `Limits`)。
+    /// `stream` 是空的:如果有人沒呼叫到這個 `complete`、改走預設方法收集 stream,就會失敗。
+    struct OwnComplete;
+
+    impl LlmProvider for OwnComplete {
+        fn stream(&self, _request: Request) -> EventStream {
+            Box::pin(stream::empty())
+        }
+
+        fn complete(&self, _request: Request) -> BoxFuture<'_, Result<Response>> {
+            Box::pin(async {
+                Ok(Response {
+                    id: None,
+                    model: "from-own-complete".into(),
+                    content: vec![],
+                    stop: StopReason {
+                        kind: StopKind::EndTurn,
+                        raw: "end_turn".into(),
+                    },
+                    usage: Usage::default(),
+                    meta: ProviderMetadata::default(),
+                })
+            })
+        }
+    }
+
+    // 透過泛型呼叫,才會真的用到 `Arc<T>` 的 impl。
+    // 直接寫 `arc.complete(...)` 時,Rust 可能自動解開 Arc 呼叫裡面的方法,測不到我們的 impl。
+    async fn complete_via<P: LlmProvider>(provider: &P) -> Result<Response> {
+        provider.complete(request()).await
+    }
+
+    async fn first_event_via<P: LlmProvider>(provider: &P) -> Option<Result<StreamEvent>> {
+        provider.stream(request()).next().await
+    }
+
+    #[tokio::test]
+    async fn arc_forwards_stream_to_the_inner_provider() {
+        let p: Arc<dyn LlmProvider> = Arc::new(Scripted(vec![Ok(start())]));
+        let first = first_event_via(&p).await.unwrap().unwrap();
+        assert_eq!(first, start());
+    }
+
+    #[tokio::test]
+    async fn arc_forwards_complete_instead_of_using_the_default() {
+        // 盒子(`Arc<dyn>`)和具體型別(`Arc<OwnComplete>`)都要轉發到裡面那個覆寫過的 `complete`。
+        let boxed: Arc<dyn LlmProvider> = Arc::new(OwnComplete);
+        assert_eq!(
+            complete_via(&boxed).await.unwrap().model,
+            "from-own-complete"
+        );
+        let concrete = Arc::new(OwnComplete);
+        assert_eq!(
+            complete_via(&concrete).await.unwrap().model,
+            "from-own-complete"
+        );
     }
 
     #[tokio::test]

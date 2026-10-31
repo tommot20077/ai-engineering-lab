@@ -64,6 +64,10 @@ pub trait LlmProviderExt: LlmProvider + Sized {
 impl<P: LlmProvider> LlmProviderExt for P {}
 ```
 
+**規則:每個 decorator 都實作 `stream` 和 `complete`,各自交給裡面那一層的同名方法。**
+只寫 `stream` 的話,`complete` 走 trait 預設方法,會跳過裡面覆寫的 `complete`(例如 client 自己的 `Limits`);
+第 10 步的測試與 mutation 檢查專門盯這件事。
+
 **包裝順序(D-020)**:`Record [ Retry [ Alias [ client ] ] ]`。
 
 - Record 在最外層:一次呼叫一筆、看得到別名、量到使用者感受的總延遲。
