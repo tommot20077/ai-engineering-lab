@@ -76,18 +76,33 @@ cargo test -p llm --test live_anthropic -- --ignored # 打真的 API,需要 .env
 
 ## 效能
 
-`cargo bench -p llm --bench sse`。量測環境:Apple M5 Pro,release build,2026-10-26。
+```bash
+cargo bench -p llm --bench sse                                          # SSE 解析、累加器
+cargo bench -p llm --features bench-internals --bench translate        # Anthropic 翻譯(內部函式)
+```
 
-| 項目 | 輸入 | 時間 | 吞吐量 |
-|---|---|---|---|
-| SSE 解析,一次全部餵入 | 一則 1000 個 text_delta 的回答(約 137 KB) | 307 µs | 428 MiB/s |
-| SSE 解析,切成 1 KB | 同上 | 315 µs | 417 MiB/s |
-| SSE 解析,切成 16 bytes(最壞情況) | 同上 | 351 µs | 374 MiB/s |
-| 累加器 | 1000 個 `TextDelta` → `Response` | 12.5 µs | 80 M 事件/s |
+`bench-internals` 只給 benchmark 用:打開後才編譯 `llm::bench`,露出兩個翻譯函式的薄包裝。它不是公開 API。
 
-**結論:不需要優化。** 這樣一則回答,Claude 要花好幾秒才串流完,我們解析它只要 0.3 ms;
-就算網路把資料切成 16 bytes 的碎片,也只慢約 13%。換算下來,單一 CPU 核心的解析能力
-大約能應付上萬條同時進行的串流。逐 byte 處理的簡單寫法可以保留。
+量測環境:Apple M5 Pro,release build,2026-10-31,同一次執行。一則 1000 個 `text_delta` 的長回答,
+從收到位元組到組成 `Response`,依序經過:
 
-尚未量測:Anthropic 事件的 JSON 解析(`anthropic/translate.rs`,不是公開 API),
-會在 gateway 的端到端 benchmark 一起量。
+| 階段 | 時間 | 吞吐量 |
+|---|---|---|
+| SSE 解析,一次全部餵入(約 137 KB) | 266 µs | 493 MiB/s |
+| SSE 解析,切成 1 KB / 16 bytes(最壞情況) | 268 / 296 µs | 490 / 443 MiB/s |
+| Anthropic 事件 JSON → `StreamEvent`(翻譯) | 213 µs | 459 MiB/s(以 `data:` 的位元組計) |
+| 累加器:1000 個 `TextDelta` → `Response` | 13 µs | 76 M 事件/s |
+| **合計** | **約 0.5 ms** | |
+
+其他:
+
+| 項目 | 時間 | 吞吐量 |
+|---|---|---|
+| 翻譯一次工具呼叫,參數分 500 片送來 | 134 µs | 472 MiB/s |
+| 送出前組 body:20 輪對話 + 2 個工具 + 工具結果(約 18 KB) | 6.5 µs | 2.7 GiB/s |
+
+**結論:不需要優化。** Claude 串流完這樣一則回答要好幾秒,我們這邊處理全部只要約 0.5 ms;
+翻譯佔其中約四成,主要是每個事件一次 JSON 反序列化。換算下來,一條串流每 5~10 秒只用掉 0.5 ms 的 CPU,單一核心大約能應付上萬條同時進行的串流。
+
+注意:同一台筆電,10-26 量的 SSE 解析比今天慢約 15%(當時 307 µs)。筆電的數字會隨溫度、背景程式浮動,
+**只比較同一次執行裡的數字**。

@@ -65,6 +65,8 @@ python3 scripts/mutate.py target/mutations.json -- cargo test -p gateway --lib
     例如 axum 的 `.route()` 加在 `.layer()` 之後本來就不受保護)。等價的要在導讀裡說明理由。
   - `WRONG-TEST`:有測試失敗但不是預期的那個 → 檢查 mutation 是不是改出了別的問題(例如重複註冊路由導致 panic)。
   - `NO-BUILD` / `SKIPPED`:mutation 本身寫錯,不算數,重寫。
+- `expect` 比對的是**測試函式名稱**(`complete_streams_and_collects_a_response`),不是檔名(`anthropic_http`、`e2e`);
+  寫成檔名會變成 WRONG-TEST(真的發生過兩次)。
 - 腳本一定會還原檔案;跑完用 `git status` 再確認一次。
 
 手寫的之後,再用 `cargo-mutants` 對這一步改到的 crate 跑一次(gateway 約 1 分鐘):

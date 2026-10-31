@@ -25,6 +25,12 @@ tracing.workspace = true
 uuid.workspace = true
 jiff.workspace = true
 
+# 編譯期的開關(Java 對照:Maven profile)。預設全部關閉。
+[features]
+# 只給 benches/translate.rs 用:打開後才編譯 `llm::bench`,露出 Anthropic 翻譯的薄包裝。
+# 不是公開 API,不保證穩定;平常編譯時這段程式根本不存在。
+bench-internals = []
+
 [dev-dependencies]
 proptest.workspace = true
 insta.workspace = true
@@ -39,3 +45,10 @@ criterion.workspace = true
 [[bench]]
 name = "sse"
 harness = false
+
+# 量內部的翻譯函式,需要 `bench-internals`。沒開這個 feature 時 cargo 直接跳過這個 bench,不會編譯失敗:
+#   cargo bench -p llm --features bench-internals --bench translate
+[[bench]]
+name = "translate"
+harness = false
+required-features = ["bench-internals"]

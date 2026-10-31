@@ -24,8 +24,11 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # feature 開關後面的程式(llm 的 bench-internals)平常不會被編譯;這一步確保它一直編譯得過。
+      - name: clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
   deny:
     runs-on: ubuntu-latest

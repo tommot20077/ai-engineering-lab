@@ -16,9 +16,12 @@ cargo fmt --all --check
 
 step "cargo clippy (-D warnings)"
 cargo clippy --workspace --all-targets --quiet -- -D warnings
+# 再用全部 feature 跑一次:`bench-internals` 底下的程式(llm::bench、benches/translate.rs)平常不會被編譯,
+# 不檢查的話,改了內部函式它壞掉也沒人知道。
+cargo clippy --workspace --all-targets --all-features --quiet -- -D warnings
 
-step "cargo test"
-cargo test --workspace --quiet
+step "cargo test (all features)"
+cargo test --workspace --all-features --quiet
 
 step "cargo deny"
 if command -v cargo-deny >/dev/null; then

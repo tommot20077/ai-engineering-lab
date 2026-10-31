@@ -240,7 +240,7 @@ max_concurrent = 16
 | 單元(`config-loader`) | `~/` 展開、不展開 `$VAR`、相對路徑以設定檔目錄為準、未知欄位的錯誤含行號、缺秘密的錯誤 |
 | 單元(`gateway`) | 設定:未知欄位、各項檢查;錯誤對照表(§17 每一列);token 比對;Host 檢查 |
 | E2E | 真的執行 gateway 程式(port 0)+ wiremock 假 Claude + 暫存紀錄目錄:完整與串流成功、`base_url` 真的被使用、紀錄有寫入、401、Host 拒絕、`/health` 不帶 token 也成功、上游 401 → 502、529 後重試成功(只記一筆)、啟動摘要、設定錯誤全部列出、SIGTERM 時進行中的請求做完再結束。未知別名 400、上游 429 → 429、413、busy 429 已由 router 測試(tower `oneshot`)涵蓋,不重複 |
-| Benchmark | Anthropic 事件的 JSON 翻譯(第一部分 retro 帶過來的項目) |
+| Benchmark | Anthropic 事件的 JSON 翻譯(第一部分 retro 帶過來的項目)。內部函式透過 `bench-internals` feature 的 `llm::bench` 量(D-028);結果:長回答翻譯 213 µs,全程約 0.5 ms,不需要優化(`crates/llm/README.md`) |
 
 拒絕類測試照第一部分的教訓,**指名是哪一步拒絕的**(retro §4)。
 

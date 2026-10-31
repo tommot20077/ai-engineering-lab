@@ -10,7 +10,7 @@ use futures::future::BoxFuture;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
 use secrecy::{ExposeSecret, SecretString};
 
-use super::translate::{EventTranslator, request_body};
+use super::translate::{EventTranslator, encode_request};
 use crate::error::{LlmError, MAX_ERROR_BODY_BYTES, Result};
 use crate::limits::Limits;
 use crate::provider::{EventStream, LlmProvider, collect};
@@ -81,8 +81,7 @@ impl AnthropicClient {
     /// 檢查並組好請求。全部是同步的工作,失敗就不必碰網路。
     fn prepare(&self, request: &Request) -> Result<reqwest::RequestBuilder> {
         request.validate()?;
-        let body = serde_json::to_vec(&request_body(request)?)
-            .map_err(|e| LlmError::InvalidRequest(format!("cannot encode request: {e}")))?;
+        let body = encode_request(request)?;
         // 整個專案唯一碰到原始 key 的地方。搜尋 `expose_secret` 就能找到它。
         let mut key = HeaderValue::from_str(self.api_key.expose_secret())
             .map_err(|_| LlmError::InvalidRequest("API key is not a valid header value".into()))?;

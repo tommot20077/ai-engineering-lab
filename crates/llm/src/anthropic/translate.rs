@@ -73,6 +73,12 @@ pub(super) fn request_body(req: &Request) -> Result<WireRequest<'_>> {
 }
 
 /// 一段內容 → Anthropic 的內容區塊。回傳 `None` 表示「這段不送」。
+/// `Request` → 要送出的 body 位元組。client 與 benchmark 共用這一個函式,量到的就是真正送出前做的事。
+pub(super) fn encode_request(req: &Request) -> Result<Vec<u8>> {
+    serde_json::to_vec(&request_body(req)?)
+        .map_err(|e| LlmError::InvalidRequest(format!("cannot encode request: {e}")))
+}
+
 fn content_to_wire(content: &Content) -> Result<Option<WireContent<'_>>> {
     let wire = match content {
         Content::Text { text, .. } => WireContent::Text { text },

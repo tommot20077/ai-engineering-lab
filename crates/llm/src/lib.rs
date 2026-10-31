@@ -41,5 +41,11 @@ pub use sse::{SseEvent, SseParser};
 pub use stop::{StopKind, StopReason};
 pub use types::{Content, Message, ProviderMetadata, Request, Response, Role, ToolDef, Usage};
 
+// benchmark 專用的後門(只在 `bench-internals` feature 下存在)。`#[doc(hidden)]`:不出現在文件裡。
+// 名字與文件都在說「這不是公開 API」;內部的 Anthropic 型別仍然拿不到,只有兩個用中立型別的函式。
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+pub use anthropic::bench;
+
 // 讓使用者不必自己加 secrecy 依賴,就能建立 API key。
 pub use secrecy::SecretString;

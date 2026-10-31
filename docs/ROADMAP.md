@@ -46,10 +46,9 @@
   設計已定案(D-017~D-025,`docs/modules/001-llm-gateway/design-part2.md`)。
   第 10~17 步完成(`Alias`、`Retry`、`Record`、`JsonlWriter`、`config-loader`、gateway 設定與組裝、HTTP API、
   安全與上限、優雅關機);gateway 可以真正啟動,已用 curl 走過一次真的 Claude 呼叫。
-  第 18 步進行中:E2E 已完成(`crates/gateway/tests/e2e.rs`,真的執行 binary + wiremock,含 SIGTERM 優雅關機;
-  port 0 的 Host 修正 `Settings::bound_to`)。cargo-mutants 的 B 類全部由 E2E 接手,剩下 2 個 C 類。
-  gateway README 完成。第 18 步還剩:翻譯 benchmark(使用者選方案 A:`bench-internals` feature 底下的
-  `#[doc(hidden)] pub mod bench` 薄包裝)。
+  第 18 步完成:E2E(`crates/gateway/tests/e2e.rs`,真的執行 binary + wiremock,含 SIGTERM 優雅關機)、
+  port 0 的 Host 修正、gateway README、翻譯 benchmark(`bench-internals` feature,D-028;長回答全程約 0.5 ms,不需要優化)。
+  下一步第 19 步:第二部分 retro。
   `.env` 已有 `GATEWAY_TOKEN`(2026-10-31 確認 gateway 讀得到)。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
@@ -85,6 +84,7 @@
 | D-025 | `/health` 公開(不檢查 token 與 Host、只回 ok),內部資訊移到需要 token 的 `/v1/status`;新增 `crates/config-loader` 給所有 binary 共用:只展開開頭 `~/`、不展開 `$VAR`、相對路徑以設定檔所在目錄為準、預設資料目錄、讀 TOML(錯誤含行號)、讀秘密環境變數成 `SecretString`;library 不依賴它 | 服務檢查帶不了 token,而 `/health` 不洩漏資訊也不花錢;002、005 也會讀設定檔,規則(特別是相對路徑)要一致 | 2026-10-31 |
 | D-026 | 開發工具:專案 skill `lab-step` 規範每一步流程;`scripts/check.sh`(與 CI 相同的檢查)、`scripts/mutate.py`(手寫 mutation,區分 CAUGHT / MISSED / WRONG-TEST / NO-BUILD);私有資料掃描改由 git hook 強制(`.githooks/` + `scripts/private-scan.sh`,關鍵字在 gitignore 的 `.private-patterns`)。使用者層級:GSD skill 全域關閉(只留 `gsd-surface` 以便恢復)、安裝 `find-skills`(安裝任何 skill 前先讀過內容) | 流程靠描述會每次做得不一樣;「絕對不能漏」的規則要由 hook 強制而不是靠記得;手寫 mutation 腳本每次重寫容易出錯 | 2026-10-31 |
 | D-027 | 導入 cargo-mutants:每一步在手寫 mutation 之後,對改到的 crate 跑一次,`missed` 分成 A 測試缺口 / B 單元測試碰不到 / C 等價或不值得測;先不放進 CI(冷編譯太慢,E2E 完成後再考慮每週跑) | 第一次對 gateway 試跑:92 個 mutant、68 秒,找出 4 個手寫 mutation 漏掉的真缺口(`base_url` 被忽略、`>`/`>=` 邊界、錯誤訊息格式、預設值常數);兩者互補 | 2026-10-31 |
+| D-028 | 量內部函式的 benchmark:cargo feature(`bench-internals`)後面放 `#[doc(hidden)] pub mod bench` 薄包裝,只用中立型別;`[[bench]]` 設 `required-features`;CI 與 `check.sh` 的 clippy 另外跑 `--all-features`、test 用 `--all-features` | 只量公開 API 會量到 HTTP 雜訊;直接公開內部模組會打破封裝;feature 後面的程式不被編譯就會默默壞掉 | 2026-10-31 |
 
 ## 模組
 

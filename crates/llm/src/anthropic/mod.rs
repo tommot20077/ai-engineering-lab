@@ -3,6 +3,9 @@
 //! 對外只公開 `AnthropicClient` 和它的設定;Anthropic 的 JSON 格式(`wire`)與翻譯規則(`translate`)
 //! 都是這個 module 的內部細節。
 
+// `#[cfg(feature = ...)]`:條件編譯。沒開 feature 時,這一行和整個 bench.rs 都不會被編譯。
+#[cfg(feature = "bench-internals")]
+pub mod bench;
 mod client;
 mod translate;
 mod wire;
