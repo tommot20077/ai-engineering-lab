@@ -43,7 +43,7 @@
 - **模組**:001 LLM Gateway — **完成**(2026-11-01)。設計 `design.md`、`design-part2.md`;回顧 `retro.md`(兩部分)。
   `crates/llm`(provider、decorator、紀錄)、`crates/config-loader`、`crates/gateway`(HTTP 服務,README 有用法)。
 - **下一步**:跟使用者決定下一個模組(依 ROADMAP 順序是 002 Eval Harness),先寫 design。
-  第二部分回顧帶出兩件小事可以先做:repo 根目錄 README、cargo-mutants 每週排程(見待辦)。
+  第二部分回顧帶出的兩件小事:repo 根目錄 README(完成)、cargo-mutants 每週排程(見待辦)。
 - **最後更新**:2026-11-01
 
 ## 決策
@@ -140,7 +140,6 @@
   001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
 - **呼叫紀錄的保留期限與壓縮(006 一起設計)**:目前只依 UTC 日期切檔,不依大小切(每天約數 MB)。
   到 006 時決定舊檔多久壓縮、多久刪除,以及要不要匯入 DuckDB / SQLite 查詢。
-- **repo 根目錄 README(001 回顧帶出)**:公開專案還沒有入口頁。內容:這是什麼、三層架構、模組清單與狀態、怎麼跑起來。
 - **cargo-mutants 每週排程(D-027,001 回顧帶出)**:GitHub Actions 排程 + 手動觸發,只回報不擋;
   先用 `.cargo/mutants.toml` 排除已說明的等價 mutant(`Gateway::shutdown`、`CHAT_TIMEOUT` 常數)。
 - **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
