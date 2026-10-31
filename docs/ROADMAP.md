@@ -45,7 +45,8 @@
 - **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
   設計已定案(D-017~D-025,`docs/modules/001-llm-gateway/design-part2.md`)。
   第 10~15 步完成(`Alias`、`Retry`、`Record`、`JsonlWriter`、`config-loader`、gateway 設定與組裝);下一步第 16 步 HTTP API。
-  **使用者待辦**:在 `.env` 加上 `GATEWAY_TOKEN`(`openssl rand -hex 32`),第 16 步起 gateway 需要它。
+  `.env` 已有 `GATEWAY_TOKEN`(2026-10-31 確認 gateway 讀得到)。
+  **暫停於 2026-10-31**:下次從第 16 步開始(axum handlers、SSE、`ApiError`,見 design-part2.md §17)。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
 
