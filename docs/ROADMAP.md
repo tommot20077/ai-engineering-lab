@@ -43,7 +43,7 @@
 - **模組**:001 LLM Gateway — 實作中,設計見 `docs/modules/001-llm-gateway/design.md`
 - **進度**:§9 第 1~9 步全部完成,`crates/llm` 完成(SSE benchmark:428 MiB/s,不需要優化)
 - **下一步**:設計 001 第二部分:`crates/llm` 的 decorator(D-018)+ `crates/gateway` 外殼。
-  待決定:紀錄格式與儲存介面、retry 參數、gateway 的 HTTP API、token 與設定檔。
+  待決定:retry 參數、gateway 的 HTTP API、token 與設定檔。
   第一部分回顧見 `docs/modules/001-llm-gateway/retro.md`
 - **最後更新**:2026-10-31
 
@@ -71,6 +71,7 @@
 | D-018 | Retry、Record、Alias 等 middleware 寫成 `LlmProvider` 的 decorator(每層都實作 `LlmProvider`、一層包一層),放在 `crates/llm` 裡用 module 分開;`crates/gateway` 只是 HTTP 外殼(HTTP ↔ `LlmProvider`、token 驗證、讀設定檔) | 直接引用 library 的 Rust 呼叫者也經過同一組 decorator,紀錄不會有缺口;之後 010 路由、011 灰度切換也只是再包一層 | 2026-10-31 |
 | D-019 | Decorator 用泛型 struct(`Retry<P>`),再加 blanket impl 讓 `Arc<T: LlmProvider + ?Sized>` 也是 provider;另提供 `with_xxx` extension trait 方便組裝 | 測試可用具體型別;gateway 可依設定檔在執行期組裝 `Arc<dyn LlmProvider>`;與 axum/tower 的 middleware 模式一致 | 2026-10-31 |
 | D-020 | 包裝順序 `Record [ Retry [ Alias [ client ] ] ]`:Record 在最外層,一次呼叫一筆紀錄,同時記請求的別名與 `Response.model`(真正回答的模型,含伺服器端 fallback);重試的每次嘗試由 Retry 寫進營運 log(不含內容) | 飛輪要的是「問題 → 最終答案」配對;使用者感受的總延遲才是真實延遲;失敗嘗試屬於除錯資訊,依 D-017 與資料紀錄分開 | 2026-10-31 |
+| D-021 | 呼叫紀錄:(1) 一筆含 schema_version、UUID v7 id、別名與 served model、完整 request/response、outcome(ok/error/interrupted/cancelled)、usage、首字延遲與總延遲;失敗與取消也記(2) JSONL、每天(UTC)一個檔;預設放專案外(macOS `~/Library/Application Support/ai-engineering-lab/records`),由 gateway.toml 設定、啟動時印出位置;目錄 700、檔案建立時即 600;`.gitignore` 仍加 `/records/`(3) 啟動時檢查目錄可寫,不行就拒絕啟動;執行中寫入失敗不影響回答,但記 ERROR 並累計遺失數;一筆一次寫入整行,讀取端跳過殘行(4) Record 邊抄邊傳不扣事件,結束(含 Drop 取消)時把紀錄丟進有上限的 channel,由單一背景 writer 寫檔;佇列滿則丟棄並報錯;關機前清空佇列 | 飛輪要完整配對,過濾容易但沒記就找不回;JSONL 寫入與整批讀取最簡單,查詢需求到 006 再匯入;專案外避免 `git clean -fdx` 誤刪與工具誤讀;記錄是附帶工作,不能拖垮回答也不能悄悄失敗 | 2026-10-31 |
 
 ## 模組
 
