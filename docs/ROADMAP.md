@@ -41,8 +41,9 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 3 步:執行器(並行、重複抽樣、執行目錄與 `responses.jsonl`、事前估價、`--budget`、`--dry-run`、篩選、`--resume`,design §12)。
-  第 1 步(資料集)、第 2 步(`Scorer` trait + 確定性檢查)完成。
+- **下一步**:002 第 4 步:LLM 評審(prompt 順序、分隔標記、structured outputs、低 effort、檢查沒過就跳過,design §12)。
+  第 1 步(資料集)、第 2 步(`Scorer` + 確定性檢查)、第 3 步(執行器:`run::start` / `resume`、執行目錄、預算、篩選)完成;
+  `--dry-run` 的估價在 library(`run::estimate`),指令本身在第 8 步的 CLI。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
@@ -150,6 +151,8 @@
   001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
 - **呼叫紀錄的保留期限與壓縮(006 一起設計)**:目前只依 UTC 日期切檔,不依大小切(每天約數 MB)。
   到 006 時決定舊檔多久壓縮、多久刪除,以及要不要匯入 DuckDB / SQLite 查詢。
+- **私有目錄與「封住寫了一半的行」有兩份**:llm `JsonlWriter`(私有函式)與 eval `store.rs` 各寫了一份(約 20 行)。
+  出現第三個使用者時(例如 006 的紀錄分析),抽成共用的小工具;規則一樣:目錄 700、檔案 600、別人讀得到就拒絕。
 - **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
   `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 

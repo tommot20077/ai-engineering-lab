@@ -5,7 +5,9 @@
 
 mod case;
 mod dataset;
+pub mod run;
 pub mod score;
+pub mod store;
 
 pub use case::{Case, ChatInput, Check, Input, Output};
 pub use dataset::{Dataset, DatasetError};

@@ -19,6 +19,12 @@ sha2.workspace = true
 regex.workspace = true
 # `BoxFuture`:`Scorer::score` 是 async,又要能放進 `Vec<Box<dyn Scorer>>`(跟 llm 的 `LlmProvider` 同樣做法)。
 futures.workspace = true
+# 每次呼叫的總時間上限(`timeout`)、量延遲用的 `Instant`(測試裡可以暫停時間)。
+tokio = { workspace = true, features = ["time"] }
+# 執行的開始與結束時間(UTC,RFC 3339),也用在執行目錄的名稱。跟 llm 的紀錄用同一套。
+jiff.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# 測試多開:`#[tokio::test]` 需要 macros 與 runtime;test-util 讓時間可以「暫停、快轉」,逾時測試不必真的等。
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
