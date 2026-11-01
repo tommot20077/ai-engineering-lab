@@ -597,6 +597,7 @@ name = "eval"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "jiff",
  "llm",
  "regex",
  "serde",
@@ -604,6 +605,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
