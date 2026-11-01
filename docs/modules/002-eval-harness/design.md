@@ -1,6 +1,6 @@
 # 002 Eval Harness — 設計
 
-> 狀態:**已定案(2026-11-01)**。決策 D-029 ~ D-034,逐項討論過;本文件補上結構、格式與實作順序。
+> 狀態:**已定案(2026-11-01)**。決策 D-029 ~ D-035,逐項討論過;本文件補上結構、格式與實作順序。
 
 ## 1. 要解決什麼
 
@@ -14,7 +14,7 @@
 CI 只跑 smoke:用假的 provider 走完整條流程,證明工具本身沒壞,不量模型品質。
 
 **不在第一版**:agent 與檢索的評估(003、004 時加,見 §3)、評審與人工標註的一致率校準、
-中斷後接續執行、網頁介面、在 CI 擋品質退步、
+網頁介面、在 CI 擋品質退步、
 Batch API(再省一半,但 `llm` 要新增非串流的批次呼叫方式,結果也要等;資料量變大再加)、
 改用 Haiku 當評審(便宜約 20 倍,但要先在同一批回答上量出它和 Sonnet 評審的一致率,有資料才能決定)。
 
@@ -27,6 +27,7 @@ Batch API(再省一半,但 `llm` 要新增非串流的批次呼叫方式,結果�
 | D-031 | 確定性檢查 + LLM 評審;評分標準寫成「逐條是否通過」 | 助理的回答大多是開放式,沒有評審量不到品質;逐條判斷比 1~5 分穩定 |
 | D-032 | `run`(呼叫模型)與 `score`(打分)分開;每次執行一個目錄、JSONL;`compare` 用 paired bootstrap 算信賴區間 | 改評分不必重付 API 費用;JSONL 簡單、可 grep;信賴區間是階段 2 要的統計證據 |
 | D-033 | 直接用 `llm` library,套 Alias + Retry,**不套 Record** | eval 的題目不是真實使用,混進呼叫紀錄會污染階段 2 的訓練原料;不必先啟動 gateway |
+| D-035 | 借鏡 Harness²(§13):並列「全部通過率」與「部分得分」;A/A 雜訊底線;打分設定不一致就拒絕比較;`--resume` 接續中斷的執行;`--dry-run` / `--tags` / `--limit`;dev / test 切分(題目夠多再實作) | 讓比較更敏感、更誠實:看得出雜訊、擋下不公平的比較、不白付錢、反覆調整時不對資料集 overfit |
 | D-034 | 費用控制:開始前估出最壞情況的費用、`--budget` 超過就不再送出新的呼叫;確定性檢查沒過就不叫評審;評審用低 effort、被評的回答放在 prompt 最後(吃 prompt cache) | 費用的大頭是評審(評一個 Haiku 回答約是產生它的 20 倍);eval 會反覆執行,意外花太多錢要在送出前擋下 |
 
 ## 3. 結構
@@ -97,6 +98,8 @@ enum Output { Chat(Response) }
 
 ```
 eval run --dataset rust-basics --model cheap [--repeats 3] [--concurrency 4] [--label "新 system prompt"]
+         [--tags rust] [--limit 5] [--dry-run] [--budget 2.00]
+eval run --resume <執行目錄> [--budget 5.00] [--retry-errors]
 ```
 
 - provider 鏈:`Retry [ Alias [ AnthropicClient ] ]`,沒有 Record。
@@ -121,6 +124,16 @@ scores/           打分的結果,見 §6
   - `--budget 2.00`:累計的實際費用超過就**不再送出新的呼叫**,已經在進行的做完;沒跑到的 (案例, 抽樣) 在
     `meta.json` 記成 `skipped_budget`,報告會標出「這次執行不完整」。
   - 有 `--budget` 但模型沒有價格時,拒絕執行(沒辦法遵守上限就不開始,fail-closed)。
+- **只跑一部分(D-035)**:
+  - `--tags rust`:只跑帶有其中任一個 tag 的案例;`--limit 5`:篩選後只跑前 5 個(依檔案順序)。
+    篩選條件記進 `meta.json`;`compare` 依 `case_id` 配對,本來就處理「兩邊題目不同」的情況。
+  - `--dry-run`:印出會跑哪些案例、總共幾次呼叫、最壞情況的費用,然後結束,**不呼叫模型**(重用事前估價的程式)。
+- **中斷後接續(D-035)**:`--budget` 用完、斷線、Ctrl+C 都會留下不完整的執行,重跑一次等於把做過的再付一次錢。
+  - `eval run --resume <執行目錄>`:讀 `responses.jsonl`,只補還沒有的 (案例, 抽樣)。
+  - 接續前比對設定(資料集 hash、模型、provider options、重複次數、篩選條件),不一樣就拒絕:一次執行裡不能混兩種設定。
+  - 之前失敗(`error`)的預設不重做,結果才可重現;`--retry-errors` 才重做。新結果附加在檔案最後,
+    同一個 (案例, 抽樣) 以最後寫入的那一筆為準(檔案只會往後加,不改舊的行)。
+  - 程式當掉時最後一行可能只寫了一半:讀到不完整的最後一行就略過,那一筆當成沒做(同 001 `JsonlWriter` 的做法)。
 
 ## 6. 打分:`eval score`(D-031)
 
@@ -128,7 +141,8 @@ scores/           打分的結果,見 §6
 eval score <run> [--judge default] [--name sonnet-judge]
 ```
 
-結果寫在 `<run>/scores/<name>.jsonl`,加上 `<name>.meta.json`(評審模型、評分標準的 hash、eval 版本、評審的用量與費用)。
+結果寫在 `<run>/scores/<name>.jsonl`,加上 `<name>.meta.json`(評審模型、effort、`skip_on_check_failure`、
+評分標準的 hash、eval 版本、評審的用量與費用)。這些就是 §7 判斷「兩份打分能不能比」的依據。
 打分一樣支援 `--budget` 與事前估價(§5)。
 同一次執行可以有多份打分(換評審、改評分),互不覆蓋。
 
@@ -170,23 +184,34 @@ pub struct Verdict {
 ## 7. 比較:`eval compare`(D-032)
 
 ```
-eval compare <run-a> <run-b> [--scores sonnet-judge]
+eval compare <run-a> <run-b> [--scores sonnet-judge] [--allow-mismatch]
 ```
 
 - 依 `case_id` 配對。只出現在一邊的案例列出來,不納入比較;資料集 hash 不同時警告。
-- 主要指標:**案例通過率**。另外列出每條評分標準的通過率、依 tag 分組的通過率。
+- **打分設定不一致就拒絕比較(D-035)**:兩邊的評審模型、effort、`skip_on_check_failure`、eval 版本有任何不同,
+  列出差異並拒絕(讀取路徑 fail-closed:不公平的比較比沒有結果更糟,會讓人做出錯的決定)。
+  `--allow-mismatch` 照樣比較,但報告最上面標示「不可直接比較」與差異清單。
+- **兩個指標並列(D-035)**:
+  - **全部通過率**:一次回答的所有檢查與標準都通過才算。**做決定(例如階段 2 切不切流量)用這個**,比較嚴格。
+  - **部分得分**:每次回答通過幾成的標準,再平均。進步(2/4 → 3/4)在全部通過率上看不到,這裡看得到;
+    題目少時信賴區間也比較窄。拿來看進度、做診斷。缺點是每條標準一樣重,所以另外列出每條標準各自的通過率。
+  - `Error`(評審自己出錯)從分母排除並顯示筆數,不算 0 分。另外列出依 tag 分組的結果。
 - **paired bootstrap**:從配對的案例中有放回地抽樣 10,000 次,算出「B − A」通過率差的 95% 信賴區間。
   亂數種子固定並寫進報告,同樣的輸入一定得到同樣的數字。
   - 區間不含 0,才說「有差異」;含 0 就是「看不出差異」,不是「一樣好」。
   - 案例少於 30 個時警告:區間會很寬。
   - 階段 2 要回答的是「小模型不比大模型差超過 δ」(non-inferiority):看區間的下界有沒有高於 −δ。δ 在 011 決定。
+- **雜訊底線(A/A,D-035)**:什麼都沒改,兩次執行的分數也會不同(模型與評審都有隨機性)。
+  - README 寫明:新資料集或換評審時,先用同一個設定跑兩次再 `compare`,確認「A 對 A」的區間大多包含 0;
+    如果常常顯示「有差異」,代表量測本身有問題(例如評審有偏差)。
+  - `compare` 發現兩邊的執行設定完全相同時,在報告最上面標註「這是雜訊底線,不是結果」。
 - **翻轉的案例**:A 通過、B 沒通過(以及反過來)逐一列出。人最需要看的就是這些。
 - 成本(總額與每題)、延遲(p50 / p95)、錯誤率並列。
 
 ## 8. CLI 與設定
 
 ```
-eval run | score | compare | add | list
+eval run | score | compare | add | list | split
 ```
 
 子命令與參數多,用 `clap` 的 derive(已經在依賴樹裡)。`eval.toml`(範例 `eval.example.toml`):
@@ -212,6 +237,16 @@ output = 0.0
 
 秘密(`ANTHROPIC_API_KEY`)只從 `.env` / 環境變數讀,跟 gateway 相同(config-loader)。
 
+### dev / test 切分(D-035,題目夠多再實作)
+
+反覆調 prompt、挑分數最高的那個版本時,會不知不覺挑到「運氣最好」的那一個(winner's curse):
+10 個其實一樣好的版本,雜訊 ±0.05,最高的那個看起來約高 0.08,實際用起來沒有比較好。
+
+- `eval split --dataset personal --seed 42 [--dev 0.5]`:依 tag 分層切成 dev 與 test(每個 tag 兩邊都有),
+  結果寫成一份切分檔(案例 id 的清單);**已經存在就拒絕覆寫**:能重切,就可能切到對自己有利的分法。
+- `eval run --split dev`:只跑 dev 的案例。調整的過程只看 dev;決定版本之後,test 只跑一次。
+- 題目少時,切成兩半兩邊都量不準:**資料集累積到約 60 題以上再實作**。
+
 ## 9. 安全與隱私
 
 - 私有資料集與所有執行結果都在 repo 外,700/600;權限太寬就拒絕執行(同 D-021 的做法)。
@@ -223,8 +258,8 @@ output = 0.0
 
 | 層 | 測什麼 |
 |---|---|
-| 單元 | 資料集檢查(重複 id、未知欄位、行號);每種確定性檢查;評審輸出的解析(格式錯 → `Error`);分隔標記;bootstrap 的已知答案與種子固定 |
-| 整合 | 執行器配假 provider:並行上限、重複抽樣、失敗也有記錄;打分器配假評審 |
+| 單元 | 資料集檢查(重複 id、未知欄位、行號);每種確定性檢查;評審輸出的解析(格式錯 → `Error`);分隔標記;bootstrap 的已知答案與種子固定;兩種指標的算法;打分設定不一致時拒絕比較 |
+| 整合 | 執行器配假 provider:並行上限、重複抽樣、失敗也有記錄、`--resume` 只補缺的、設定不同拒絕接續;打分器配假評審 |
 | E2E(CI 的 smoke) | 真的執行 eval binary,上游是 wiremock:`run` → `score` → `compare`,檢查檔案與報告 |
 | Live | 手動:用 `rust-basics` 比較 `cheap` 與 `default`,結果寫進 README 當範例 |
 
@@ -242,12 +277,20 @@ output = 0.0
 |---|---|---|
 | 1 | `crates/eval` 骨架、`Case` / `Input`、讀資料集與檢查、SHA-256 | enum 擴充點、serde 的 tagged enum、逐行解析附行號 |
 | 2 | `Scorer` trait + 確定性檢查 | trait object、`BoxFuture`、`regex` |
-| 3 | 執行器:並行、重複抽樣、執行目錄與 `responses.jsonl`;事前估價與 `--budget` | `buffer_unordered`、`Arc` 共享 provider、`AtomicU64` 累計費用 |
+| 3 | 執行器:並行、重複抽樣、執行目錄與 `responses.jsonl`;事前估價、`--budget`、`--dry-run`、`--tags` / `--limit`、`--resume` | `buffer_unordered`、`Arc` 共享 provider、`AtomicU64` 累計費用、`HashSet` 找出缺的 |
 | 4 | LLM 評審:prompt 順序、分隔標記、structured outputs、低 effort、檢查沒過就跳過 | 不可信輸出的驗證、隨機 nonce |
 | 5 | `score`:打分流程、案例層級的彙總、`scores/` | 迭代器組合、`HashMap` 分組 |
-| 6 | 統計:平均、paired bootstrap、固定種子 | 純函式 + 可重現的亂數 |
-| 7 | `compare` 報告:翻轉案例、成本、延遲分位數 | 格式化輸出、排序 |
+| 6 | 統計:全部通過率、部分得分、paired bootstrap、固定種子 | 純函式 + 可重現的亂數 |
+| 7 | `compare` 報告:打分設定一致性、雜訊底線標註、翻轉案例、成本、延遲分位數 | 格式化輸出、排序 |
 | 8 | CLI 與 `eval.toml`、composition root | `clap` derive macro |
 | 9 | `eval add`:從呼叫紀錄加案例 | UUID v7 取出時間 |
-| 10 | 公開資料集、E2E smoke、README、第一次真的比較(cheap vs default) | 子行程 + wiremock(沿用 001) |
+| 10 | 公開資料集、E2E smoke、README(含 A/A 做法)、第一次真的比較(cheap vs default) | 子行程 + wiremock(沿用 001) |
 | 11 | retro | |
+| 之後 | dev / test 切分(資料集約 60 題以上) | |
+
+## 13. 參考資料
+
+- **Harness²**(Google Research,Apache 2.0,arXiv 2610.14224,github.com/google-research/harness2):
+  自動改良 agent harness 的研究框架。借鏡的是做法,程式碼從頭寫(D-035):
+  評審失敗不算 0 分、「部分得分」與「全部通過」並列、同設定兩次的差距當雜訊底線、
+  報告主動警告不可比較的情況、重跑接續、`--dry-run` 與篩選、固定種子分層切分且不准覆寫、改良流程碰不到評分程式。

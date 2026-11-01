@@ -40,8 +40,8 @@
 
 ## 目前位置
 
-- **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-034)。
-- **下一步**:002 第 3 步:執行器(並行、重複抽樣、執行目錄與 `responses.jsonl`、事前估價與 `--budget`,design §12)。
+- **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
+- **下一步**:002 第 3 步:執行器(並行、重複抽樣、執行目錄與 `responses.jsonl`、事前估價、`--budget`、`--dry-run`、篩選、`--resume`,design §12)。
   第 1 步(資料集)、第 2 步(`Scorer` trait + 確定性檢查)完成。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -86,6 +86,7 @@
 | D-032 | eval 分 `run`(呼叫模型)與 `score`(打分)兩階段;每次執行一個目錄(`meta.json` + JSONL);`compare` 依案例配對,用 paired bootstrap(固定種子)算通過率差的 95% 信賴區間 | 改評分或換評審不必重付 API 費用;JSONL 簡單、可 grep,不提早替 006 決定儲存;信賴區間是階段 2 要的統計證據 | 2026-11-01 |
 | D-033 | eval 直接用 `llm` library,套 Alias + Retry,不套 Record;不經過 gateway | eval 的題目不是真實使用,記進呼叫紀錄會污染階段 2 的訓練原料;不必先啟動 gateway | 2026-11-01 |
 | D-034 | eval 費用控制:事前估出最壞情況的費用、`--budget` 超過就不再送出新呼叫(沒有價格時拒絕執行);確定性檢查沒過就不叫評審;評審用低 effort、被評的回答放 prompt 最後吃 prompt cache。Batch API 與 Haiku 評審留待之後 | 費用大頭是評審(約是產生 Haiku 回答的 20 倍);eval 會反覆執行,超支要在送出前擋下 | 2026-11-01 |
+| D-035 | eval 借鏡 Harness²:並列全部通過率與部分得分;A/A 雜訊底線;打分設定不一致預設拒絕比較(`--allow-mismatch` 例外);`--resume` 接續;`--dry-run` / `--tags` / `--limit`;dev / test 切分(資料集約 60 題以上再做) | 比較要敏感也要誠實;`--budget` 會留下不完整的執行,接續才不白付錢;反覆調整會對資料集 overfit | 2026-11-01 |
 
 ## 模組
 
@@ -94,7 +95,7 @@
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
-| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 設計完成(D-029~D-034),實作中 |
+| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 設計完成(D-029~D-035),實作中 |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
@@ -153,6 +154,15 @@
   `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 
 ## 想法池(還沒排進模組)
+
+**Harness²(Google Research,2026-11-01 讀過,見 002 design §13)帶來的**:
+
+- **給 003 的設計清單**:harness 的 8 個組成部分——system prompt、guardrails、memory、tool guidance、
+  subagents、skills、scripts、plugins,逐項決定要不要做;「方法 / 執行器 / benchmark」三者分開、可替換。
+- **給 003 的提醒(作弊)**:他們看過 agent 自己上網下載評分標準。`evals/` 的公開題目在 GitHub 上,
+  評估有網路工具的 agent 時,要在網路層限制它能連的地方。
+- **自動改良 harness 當成一個模組**(003、002 之後):不改權重,用 eval 驅動「提出修改 → 實際試跑 → 比較行為 → 組合」
+  改良 prompt 與工具說明。這是資料飛輪之外、便宜很多的另一條路;「每個領域累積教訓」也接近個人助理的長期記憶。
 
 **其他有難度的方向**(可當北極星之後的延伸,或某個模組的進階版):
 
