@@ -16,6 +16,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
+regex.workspace = true
+# `BoxFuture`:`Scorer::score` 是 async,又要能放進 `Vec<Box<dyn Scorer>>`(跟 llm 的 `LlmProvider` 同樣做法)。
+futures.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -302,6 +302,16 @@ mod tests {
     }
 
     #[test]
+    fn an_invalid_regex_is_rejected_when_loading() {
+        // 讀檔時就擋下,不要等到花錢跑完模型、打分時才發現。
+        let text = line("a", r#","checks":[{"type":"regex","pattern":"(unclosed"}]"#);
+        assert_eq!(
+            problems(&text),
+            ["line 1 (`a`): check 1 has an invalid regex: unclosed group"]
+        );
+    }
+
+    #[test]
     fn unknown_input_types_and_check_types_are_rejected() {
         let agent = line("a", CHECK).replace(r#""type":"chat""#, r#""type":"agent""#);
         let check = line("b", r#","checks":[{"type":"contians","value":"x"}]"#);

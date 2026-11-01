@@ -596,7 +596,9 @@ dependencies = [
 name = "eval"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "llm",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

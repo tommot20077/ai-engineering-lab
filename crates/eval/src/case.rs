@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use llm::{Message, ProviderMetadata, Request, ToolDef};
+use llm::{Content, Message, ProviderMetadata, Request, Response, ToolDef};
 use serde::{Deserialize, Serialize};
 
 /// 一個案例:輸入、以及怎麼判斷回答好不好。
@@ -75,7 +75,33 @@ impl ChatInput {
     }
 }
 
-/// 確定性檢查:程式自己就能判斷,不需要呼叫 API(D-031)。判斷的邏輯在第 2 步。
+/// 一次執行的輸出,跟 `Input` 一一對應(D-029):`Input::Chat` 的輸出是 `Output::Chat`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Output {
+    Chat(Response),
+}
+
+impl Output {
+    /// 給確定性檢查用的文字:所有 text 區塊,用換行接起來。thinking 與工具呼叫不算(那不是給人看的回答)。
+    pub fn text(&self) -> String {
+        match self {
+            Output::Chat(response) => response
+                .content
+                .iter()
+                // `filter_map`:不是 text 的回傳 None 被濾掉,是的話取出裡面的字串。
+                // Java 對照:`.filter(c -> c instanceof Text).map(c -> ((Text) c).text())`,一步做完。
+                .filter_map(|block| match block {
+                    Content::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+/// 確定性檢查:程式自己就能判斷,不需要呼叫 API(D-031)。判斷的邏輯在 `score/check.rs`。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Check {
@@ -100,6 +126,21 @@ pub enum Check {
     },
 }
 
+/// 給人看的檢查描述,打分結果的 `criterion` 欄位就是它,例如 `contains "所有權"`。
+// `{value:?}`:用 Debug 格式印字串,會加上引號並跳脫特殊字元;中文這類可以印出的字元照原樣顯示。
+impl fmt::Display for Check {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Check::Exact { value } => write!(f, "exact {value:?}"),
+            Check::Contains { value } => write!(f, "contains {value:?}"),
+            Check::NotContains { value } => write!(f, "not_contains {value:?}"),
+            Check::Regex { pattern } => write!(f, "regex /{pattern}/"),
+            Check::Json { required } if required.is_empty() => write!(f, "json"),
+            Check::Json { required } => write!(f, "json with fields {}", required.join(", ")),
+        }
+    }
+}
+
 impl Case {
     /// 檢查一個案例本身合不合理,回傳全部的問題(空的 = 沒問題)。
     pub fn problems(&self) -> Vec<String> {
@@ -118,6 +159,14 @@ impl Case {
         for (n, check) in (1..).zip(&self.checks) {
             if let Some(field) = check.empty_field() {
                 problems.push(format!("check {n} has an empty {field}"));
+            } else if let Check::Regex { pattern } = check
+                && let Err(e) = regex::Regex::new(pattern)
+            {
+                // 讀檔時就擋下,不要等花錢跑完模型、打分時才發現。
+                problems.push(format!(
+                    "check {n} has an invalid regex: {}",
+                    regex_problem(&e)
+                ));
             }
         }
         for (n, item) in (1..).zip(&self.rubric) {
@@ -136,6 +185,13 @@ impl Case {
         }
         problems
     }
+}
+
+/// regex 的錯誤訊息有好幾行(含一張指出位置的小圖),最後一行是原因:`error: unclosed group` → `unclosed group`。
+pub(crate) fn regex_problem(error: &regex::Error) -> String {
+    let message = error.to_string();
+    let last = message.lines().last().unwrap_or_default();
+    last.strip_prefix("error: ").unwrap_or(last).to_owned()
 }
 
 /// `LlmError::InvalidRequest("max_tokens must be at least 1")` → `max_tokens must be at least 1`。
