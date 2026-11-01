@@ -596,6 +596,7 @@ dependencies = [
 name = "eval"
 version = "0.1.0"
 dependencies = [
+ "fastrand",
  "futures",
  "jiff",
  "llm",

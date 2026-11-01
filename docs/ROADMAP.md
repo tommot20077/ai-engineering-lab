@@ -41,8 +41,9 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 4 步:LLM 評審(prompt 順序、分隔標記、structured outputs、低 effort、檢查沒過就跳過,design §12)。
-  第 1 步(資料集)、第 2 步(`Scorer` + 確定性檢查)、第 3 步(執行器:`run::start` / `resume`、執行目錄、預算、篩選)完成;
+- **下一步**:002 第 5 步:`score` 打分流程(檢查沒過就不叫評審、自我偏好警告、`scores/<name>.jsonl` 與 meta,design §12)。
+  第 1 步(資料集)、第 2 步(`Scorer` + 確定性檢查)、第 3 步(執行器:`run::start` / `resume`、執行目錄、預算、篩選)、
+  第 4 步(LLM 評審 `score::Judge`)完成;
   `--dry-run` 的估價在 library(`run::estimate`),指令本身在第 8 步的 CLI。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理

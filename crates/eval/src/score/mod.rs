@@ -3,13 +3,16 @@
 //! 每個打分器看一個案例與它的輸出,對每一條標準給出一個判決(`Verdict`):通過、不通過,或打分器本身出錯。
 
 mod check;
+mod judge;
 
 use futures::future::BoxFuture;
+use llm::Usage;
 use serde::{Deserialize, Serialize};
 
 use crate::case::{Case, Output};
 
 pub use check::Checks;
+pub use judge::Judge;
 
 /// 打分器。現在有確定性檢查(`Checks`);第 4 步加 LLM 評審,之後也可能有其他的(例如 Jev)。
 ///
@@ -22,7 +25,15 @@ pub trait Scorer: Send + Sync {
     fn name(&self) -> &str;
 
     // `'a`:回傳的 future 會借用 `self`、`case`、`output`,所以三者都要活得比 future 久。
-    fn score<'a>(&'a self, case: &'a Case, output: &'a Output) -> BoxFuture<'a, Vec<Verdict>>;
+    fn score<'a>(&'a self, case: &'a Case, output: &'a Output) -> BoxFuture<'a, Scored>;
+}
+
+/// 一個打分器對一次回答的結果。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Scored {
+    pub verdicts: Vec<Verdict>,
+    /// 打分本身用掉的 token(評審要付錢;確定性檢查是 0)。寫進 `scores/<name>.meta.json`(design §6)。
+    pub usage: Usage,
 }
 
 /// 對一條標準的判決。打分的結果檔(`scores/<name>.jsonl`)裡每一筆都是它。

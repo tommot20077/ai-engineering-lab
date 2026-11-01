@@ -19,6 +19,8 @@ sha2.workspace = true
 regex.workspace = true
 # `BoxFuture`:`Scorer::score` 是 async,又要能放進 `Vec<Box<dyn Scorer>>`(跟 llm 的 `LlmProvider` 同樣做法)。
 futures.workspace = true
+# 評審 prompt 的分隔標記(nonce)。不需要密碼學等級:被評的回答在 nonce 產生之前就寫好了,猜不到它。
+fastrand.workspace = true
 # 每次呼叫的總時間上限(`timeout`)、量延遲用的 `Instant`(測試裡可以暫停時間)。
 tokio = { workspace = true, features = ["time"] }
 # 執行的開始與結束時間(UTC,RFC 3339),也用在執行目錄的名稱。跟 llm 的紀錄用同一套。

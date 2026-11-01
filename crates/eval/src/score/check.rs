@@ -3,7 +3,7 @@
 use futures::future::{self, BoxFuture};
 use serde_json::Value;
 
-use super::{Scorer, Verdict, VerdictResult};
+use super::{Scored, Scorer, Verdict, VerdictResult};
 use crate::case::{Case, Check, Output, regex_problem};
 
 const NAME: &str = "check";
@@ -16,7 +16,7 @@ impl Scorer for Checks {
         NAME
     }
 
-    fn score<'a>(&'a self, case: &'a Case, output: &'a Output) -> BoxFuture<'a, Vec<Verdict>> {
+    fn score<'a>(&'a self, case: &'a Case, output: &'a Output) -> BoxFuture<'a, Scored> {
         let answer = output.text();
         let verdicts = case
             .checks
@@ -25,7 +25,10 @@ impl Scorer for Checks {
             .collect();
         // 確定性檢查不需要等任何東西:`future::ready` 是「已經完成」的 future。
         // 為了跟評審用同一個介面,還是包成 future。Java 對照:`CompletableFuture.completedFuture(...)`。
-        Box::pin(future::ready(verdicts))
+        Box::pin(future::ready(Scored {
+            verdicts,
+            ..Scored::default()
+        }))
     }
 }
 
@@ -155,7 +158,8 @@ mod tests {
 
     /// 只有一條檢查時的判決。
     fn judge(check: Check, answer: &str) -> (VerdictResult, Option<String>) {
-        let verdicts = block_on(Checks.score(&case(vec![check]), &output(vec![text(answer)])));
+        let verdicts =
+            block_on(Checks.score(&case(vec![check]), &output(vec![text(answer)]))).verdicts;
         assert_eq!(verdicts.len(), 1, "{verdicts:?}");
         let v = verdicts.into_iter().next().unwrap();
         (v.result, v.reason)
@@ -290,7 +294,10 @@ mod tests {
             Check::Contains { value: value("a") },
             Check::Contains { value: value("z") },
         ];
-        let verdicts = block_on(Checks.score(&case(checks), &output(vec![text("abc")])));
+        let scored = block_on(Checks.score(&case(checks), &output(vec![text("abc")])));
+        // 確定性檢查不花錢:用量是 0。
+        assert_eq!(scored.usage, llm::Usage::default());
+        let verdicts = scored.verdicts;
         assert_eq!(
             verdicts,
             [
@@ -364,6 +371,10 @@ mod tests {
         let scorers: Vec<Box<dyn Scorer>> = vec![Box::new(Checks)];
         let names: Vec<&str> = scorers.iter().map(|s| s.name()).collect();
         assert_eq!(names, ["check"]);
-        assert!(block_on(scorers[0].score(&case(vec![]), &output(vec![]))).is_empty());
+        assert!(
+            block_on(scorers[0].score(&case(vec![]), &output(vec![])))
+                .verdicts
+                .is_empty()
+        );
     }
 }
