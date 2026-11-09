@@ -42,6 +42,8 @@ pub enum Command {
     Score(ScoreArgs),
     /// Compare the scores of two runs.
     Compare(CompareArgs),
+    /// Turn a gateway call record into a case of a private dataset.
+    Add(AddArgs),
 }
 
 #[derive(Debug, Args)]
@@ -128,6 +130,33 @@ pub struct CompareArgs {
     /// Compare even if the two scorings used different settings (the report says so at the top).
     #[arg(long)]
     pub allow_mismatch: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AddArgs {
+    /// The call record id (UUID v7, as printed in the gateway's records).
+    #[arg(long, value_name = "ID")]
+    pub record: uuid::Uuid,
+    /// Private dataset name (created if missing). Public datasets are never written.
+    #[arg(long)]
+    pub dataset: String,
+    /// Case id (default: rec-<record id>).
+    #[arg(long)]
+    pub id: Option<String>,
+    /// Tags (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub tags: Vec<String>,
+    /// A rubric item for the judge; repeat for more.
+    // 不拆逗號(評分標準是一句話,裡面常有逗號);重複給 `--rubric` 就是多條。
+    // `required = true`:案例沒有確定性檢查,沒有評分標準就沒辦法打分。
+    #[arg(long, required = true)]
+    pub rubric: Vec<String>,
+    /// Keep the original answer as the reference answer (shown only to the judge).
+    #[arg(long)]
+    pub keep_answer: bool,
+    /// Print the case instead of writing it.
+    #[arg(long)]
+    pub print: bool,
 }
 
 impl ScoreArgs {

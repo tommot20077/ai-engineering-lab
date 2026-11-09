@@ -26,6 +26,8 @@ fastrand.workspace = true
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 # 執行的開始與結束時間(UTC,RFC 3339),也用在執行目錄的名稱。跟 llm 的紀錄用同一套。
 jiff.workspace = true
+# `eval add`:呼叫紀錄的 id 是 UUID v7,從它取出時間,算出紀錄在哪一天的檔案。
+uuid.workspace = true
 # ---- 以下給 CLI(composition root)用 ----
 # 讀 eval.toml、預設資料目錄、從環境變數讀 API key(規則跟 gateway 一樣,D-025)。
 config-loader = { path = "../config-loader" }

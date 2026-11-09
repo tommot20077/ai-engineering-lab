@@ -15,7 +15,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use config_loader::ConfigError;
-use eval::cli::{Cli, Command, CompareArgs, RunArgs, ScoreArgs};
+use eval::add::{self, CaseOptions};
+use eval::cli::{AddArgs, Cli, Command, CompareArgs, RunArgs, ScoreArgs};
 use eval::config::{RawConfig, Settings};
 use eval::run::{self, Estimate, ExecOptions, Price, RunConfig, Summary};
 use eval::score::{self, Judge, ScoreSetup, ScoreSummary};
@@ -39,6 +40,7 @@ async fn main() -> Result<()> {
         Command::Score(args) => score_command(&load_settings(&cli.config)?, &args).await,
         // 比較只讀兩個執行目錄,不需要設定檔,也不呼叫任何模型。
         Command::Compare(args) => compare_command(&args),
+        Command::Add(args) => add_command(&load_settings(&cli.config)?, &args),
     }
 }
 
@@ -51,9 +53,10 @@ fn load_settings(path: &Path) -> Result<Settings> {
         ),
         Err(e) => return Err(e.into()),
     };
-    Ok(Settings::from_config(&file, || {
-        config_loader::default_data_dir("eval")
-    })?)
+    Ok(Settings::from_config(
+        &file,
+        config_loader::default_data_dir,
+    )?)
 }
 
 /// `Retry [ Alias [ AnthropicClient ] ]`,沒有 Record(D-033:eval 的題目不是真實使用,不能混進呼叫紀錄)。
@@ -236,6 +239,31 @@ fn compare_command(args: &CompareArgs) -> Result<()> {
     let b = compare::load(&args.run_b, &name)?;
     let report = compare::compare(&a, &b, args.allow_mismatch)?;
     print!("{report}");
+    Ok(())
+}
+
+/// 從呼叫紀錄加一個案例到私有資料集;`--print` 只印出來、不寫檔(真實對話寫進檔案前,先讓人看一次)。
+fn add_command(settings: &Settings, args: &AddArgs) -> Result<()> {
+    let record = add::find_record(&settings.records_dir, args.record)?;
+    let options = CaseOptions {
+        id: args.id.clone(),
+        tags: args.tags.clone(),
+        rubric: args.rubric.clone(),
+        keep_answer: args.keep_answer,
+    };
+    let case = add::case_from_record(&record, &options)?;
+    // 先決定寫到哪裡(名稱不合法、跟公開資料集同名都在這裡擋下),`--print` 時也照樣檢查。
+    let path = settings.private_dataset_path(&args.dataset)?;
+    if args.print {
+        println!("{}", serde_json::to_string_pretty(&case)?);
+        eprintln!(
+            "(not written; without --print it would be appended to {})",
+            path.display()
+        );
+        return Ok(());
+    }
+    add::append_case(&path, &case)?;
+    println!("added case `{}` to {}", case.id, path.display());
     Ok(())
 }
 

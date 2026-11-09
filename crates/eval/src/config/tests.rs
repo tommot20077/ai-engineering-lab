@@ -13,7 +13,12 @@ fn load(text: &str) -> (tempfile::TempDir, ConfigFile<RawConfig>) {
 
 fn settings(text: &str) -> Result<Settings, InvalidConfig> {
     let (_tmp, file) = load(text);
-    Settings::from_config(&file, || Ok("/data/eval".into()))
+    Settings::from_config(&file, fake_data_dir)
+}
+
+/// 假的預設資料目錄:`/data/<程式名稱>`。
+fn fake_data_dir(app: &str) -> config_loader::Result<PathBuf> {
+    Ok(PathBuf::from(format!("/data/{app}")))
 }
 
 /// 必填的最小設定。
@@ -42,7 +47,7 @@ fn the_example_file_is_a_valid_config() {
 #[test]
 fn defaults_fill_in_everything_that_is_optional() {
     let (tmp, file) = load(MINIMAL);
-    let s = Settings::from_config(&file, || Ok("/data/eval".into())).unwrap();
+    let s = Settings::from_config(&file, fake_data_dir).unwrap();
 
     assert_eq!(
         s,
@@ -61,6 +66,8 @@ fn defaults_fill_in_everything_that_is_optional() {
             private_datasets: "/data/eval/datasets".into(),
             // 相對路徑以設定檔所在的目錄為準(config-loader,D-025)。
             public_datasets: tmp.path().join("evals"),
+            // 跟 gateway 的預設一樣:gateway 資料目錄底下的 records。
+            records_dir: "/data/gateway/records".into(),
             retry: RetryPolicy::default(),
         }
     );
@@ -85,6 +92,7 @@ timeout_secs = 60
 [paths]
 data_dir = "/srv/eval"
 datasets = "/repo/evals"
+records = "gw/records"
 [prices."claude-haiku-5-5"]
 input = 1.0
 output = 5.0
@@ -105,6 +113,12 @@ output = 5.0
     assert_eq!(s.runs_dir, Path::new("/srv/eval/runs"));
     assert_eq!(s.private_datasets, Path::new("/srv/eval/datasets"));
     assert_eq!(s.public_datasets, Path::new("/repo/evals"));
+    // 相對路徑以設定檔所在的目錄為準。
+    assert!(
+        s.records_dir.ends_with("gw/records") && s.records_dir.is_absolute(),
+        "{:?}",
+        s.records_dir
+    );
     // 價格依實際的模型 id 存;用別名或 id 都查得到。
     let haiku = Some(Price {
         input: 1.0,
@@ -193,16 +207,21 @@ fn prices_keyed_by_an_alias_name_point_to_the_model_id() {
 
 #[test]
 fn a_missing_default_data_dir_is_a_problem_not_a_panic() {
+    let no_home = |_: &str| Err(config_loader::ConfigError::NoHome);
     let (_tmp, file) = load(MINIMAL);
-    let err = Settings::from_config(&file, || Err(config_loader::ConfigError::NoHome)).unwrap_err();
+    let err = Settings::from_config(&file, no_home).unwrap_err();
     assert_eq!(
         err.0,
-        ["default data directory: cannot find the home directory: HOME is not set"]
+        [
+            "default data directory: cannot find the home directory: HOME is not set",
+            "default records directory: cannot find the home directory: HOME is not set",
+        ]
     );
-    // 寫了 data_dir 就不需要預設值。
-    let explicit = format!("{MINIMAL}[paths]\ndata_dir = \"/srv/eval\"\n");
+    // 兩個路徑都寫了,就不需要預設值。
+    let explicit =
+        format!("{MINIMAL}[paths]\ndata_dir = \"/srv/eval\"\nrecords = \"/srv/records\"\n");
     let (_tmp, file) = load(&explicit);
-    assert!(Settings::from_config(&file, || Err(config_loader::ConfigError::NoHome)).is_ok());
+    assert!(Settings::from_config(&file, no_home).is_ok());
 }
 
 #[test]
@@ -340,5 +359,31 @@ fn only_aliases_from_the_config_are_accepted() {
     assert_eq!(
         err.to_string(),
         "unknown model alias `claude-haiku-5-5`; [aliases] in the config has: cheap, default"
+    );
+}
+
+#[test]
+fn eval_add_writes_only_private_datasets_by_name() {
+    let (_tmp, s) = with_datasets();
+    assert_eq!(
+        s.private_dataset_path("personal").unwrap(),
+        s.private_datasets.join("personal.jsonl")
+    );
+    // 不收路徑:`evals/x.jsonl` 會寫進 repo(公開),D-030。
+    for bad in ["evals/x.jsonl", "/tmp/x.jsonl", "..", ""] {
+        assert_eq!(
+            s.private_dataset_path(bad).unwrap_err(),
+            DatasetLookupError::InvalidName(bad.into()),
+            "{bad:?}"
+        );
+    }
+    // 公開資料集已經有同名的:之後 `--dataset` 會分不清,先擋下。
+    std::fs::write(s.public_datasets.join("smoke.jsonl"), "").unwrap();
+    assert_eq!(
+        s.private_dataset_path("smoke").unwrap_err(),
+        DatasetLookupError::PublicNameTaken {
+            name: "smoke".into(),
+            public: s.public_datasets.join("smoke.jsonl"),
+        }
     );
 }

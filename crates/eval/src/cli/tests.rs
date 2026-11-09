@@ -245,3 +245,58 @@ fn judge_all_turns_off_skipping_for_one_scoring() {
     assert!(!all.skip_on_check_failure(true));
     assert!(!all.skip_on_check_failure(false));
 }
+
+#[test]
+fn add_needs_a_record_a_dataset_and_at_least_one_rubric_item() {
+    let id = "019a3b4c-5d6e-7f80-9a1b-2c3d4e5f6a7b";
+    let Command::Add(a) = parse(&[
+        "add",
+        "--record",
+        id,
+        "--dataset",
+        "personal",
+        "--rubric",
+        "說明 move, 並舉例",
+        "--rubric",
+        "沒有捏造 API",
+        "--tags",
+        "rust,ownership",
+        "--id",
+        "own-1",
+        "--keep-answer",
+        "--print",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!()
+    };
+    assert_eq!(a.record.to_string(), id);
+    assert_eq!(a.dataset, "personal");
+    // 評分標準可以重複給;句子裡的逗號不會被拆開。
+    assert_eq!(a.rubric, ["說明 move, 並舉例", "沒有捏造 API"]);
+    assert_eq!(a.tags, ["rust", "ownership"]);
+    assert_eq!(a.id.as_deref(), Some("own-1"));
+    assert!(a.keep_answer && a.print);
+
+    assert_eq!(
+        kind(&["add", "--record", id, "--dataset", "personal"]),
+        ErrorKind::MissingRequiredArgument
+    );
+    assert_eq!(
+        kind(&["add", "--dataset", "personal", "--rubric", "r"]),
+        ErrorKind::MissingRequiredArgument
+    );
+    assert_eq!(
+        kind(&[
+            "add",
+            "--record",
+            "not-a-uuid",
+            "--dataset",
+            "p",
+            "--rubric",
+            "r"
+        ]),
+        ErrorKind::ValueValidation
+    );
+}

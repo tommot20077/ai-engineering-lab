@@ -76,6 +76,8 @@ impl Default for RunSection {
 pub struct PathsSection {
     pub data_dir: Option<String>,
     pub datasets: String,
+    /// gateway 的呼叫紀錄(`eval add` 從這裡挑案例)。預設跟 gateway 一樣。
+    pub records: Option<String>,
 }
 
 impl Default for PathsSection {
@@ -83,6 +85,7 @@ impl Default for PathsSection {
         Self {
             data_dir: None,
             datasets: DEFAULT_PUBLIC_DATASETS.into(),
+            records: None,
         }
     }
 }
@@ -110,6 +113,8 @@ pub struct Settings {
     /// 私有資料集(`<data_dir>/datasets`)。
     pub private_datasets: PathBuf,
     pub public_datasets: PathBuf,
+    /// gateway 的呼叫紀錄目錄(一天一個 JSONL 檔)。
+    pub records_dir: PathBuf,
     pub retry: RetryPolicy,
 }
 
@@ -155,15 +160,22 @@ pub enum DatasetLookupError {
 
     #[error("{} is accessible by other users (mode {mode:o}); run `chmod 700` on it", dir.display())]
     NotPrivate { dir: PathBuf, mode: u32 },
+
+    #[error(
+        "a public dataset named `{name}` exists ({}); `eval add` only writes private datasets, so pick another name",
+        public.display()
+    )]
+    PublicNameTaken { name: String, public: PathBuf },
 }
 
 impl Settings {
     /// 檢查設定、補上預設值、解析路徑。
     ///
-    /// `default_data_dir`:沒寫 `paths.data_dir` 時的預設目錄。用函式傳進來,測試才不必碰真的家目錄。
+    /// `default_data_dir`:某個程式(`eval`、`gateway`)的預設資料目錄,沒寫路徑時用。
+    /// 用函式傳進來,測試才不必碰真的家目錄。正式版是 `config_loader::default_data_dir`。
     pub fn from_config(
         file: &ConfigFile<RawConfig>,
-        default_data_dir: impl FnOnce() -> config_loader::Result<PathBuf>,
+        default_data_dir: impl Fn(&str) -> config_loader::Result<PathBuf>,
     ) -> Result<Self, InvalidConfig> {
         let raw = &file.value;
         // 每個檢查都把問題丟進同一個清單,不提早 return:最後一次全部列出來(同 gateway)。
@@ -229,8 +241,19 @@ impl Settings {
                 .resolve(dir)
                 .map_err(|e| problems.push(format!("paths.data_dir: {e}")))
                 .ok(),
-            None => default_data_dir()
+            None => default_data_dir("eval")
                 .map_err(|e| problems.push(format!("default data directory: {e}")))
+                .ok(),
+        };
+        let records_dir = match &raw.paths.records {
+            Some(dir) => file
+                .resolve(dir)
+                .map_err(|e| problems.push(format!("paths.records: {e}")))
+                .ok(),
+            // 跟 gateway 的預設一樣(gateway 的 `Settings::from_config`),才找得到 gateway 寫的紀錄。
+            None => default_data_dir("gateway")
+                .map(|dir| dir.join("records"))
+                .map_err(|e| problems.push(format!("default records directory: {e}")))
                 .ok(),
         };
         let public_datasets = file
@@ -239,8 +262,10 @@ impl Settings {
             .ok();
 
         // 只有「沒有任何問題」時,上面那些 Option 才一定都是 Some;寫在同一個 match 裡就不需要 unwrap(同 gateway)。
-        match (base_url, data_dir, public_datasets) {
-            (Some(base_url), Some(data_dir), Some(public_datasets)) if problems.is_empty() => {
+        match (base_url, data_dir, public_datasets, records_dir) {
+            (Some(base_url), Some(data_dir), Some(public_datasets), Some(records_dir))
+                if problems.is_empty() =>
+            {
                 Ok(Self {
                     aliases: raw.aliases.clone(),
                     base_url,
@@ -255,6 +280,7 @@ impl Settings {
                     runs_dir: data_dir.join("runs"),
                     private_datasets: data_dir.join("datasets"),
                     public_datasets,
+                    records_dir,
                     retry: RetryPolicy::default(),
                 })
             }
@@ -313,6 +339,25 @@ impl Settings {
                 looked: vec![private, public],
             }),
         }
+    }
+}
+
+impl Settings {
+    /// `eval add` 要寫入的私有資料集檔案。只接受名稱(不接受路徑:不能寫進 repo 裡的 `evals/`,D-030);
+    /// 公開資料集已經有同名的也拒絕(之後 `--dataset` 會分不清是哪一個,design §4)。
+    pub fn private_dataset_path(&self, name: &str) -> Result<PathBuf, DatasetLookupError> {
+        if !valid_name(name) {
+            return Err(DatasetLookupError::InvalidName(name.to_owned()));
+        }
+        let file = format!("{name}.jsonl");
+        let public = self.public_datasets.join(&file);
+        if public.exists() {
+            return Err(DatasetLookupError::PublicNameTaken {
+                name: name.to_owned(),
+                public,
+            });
+        }
+        Ok(self.private_datasets.join(file))
     }
 }
 

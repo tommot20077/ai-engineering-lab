@@ -35,6 +35,11 @@ timeout_secs = 300
 # data_dir = "~/ai-lab-eval"
 # 公開資料集(進 git)的目錄。`--dataset rust-basics` 先找私有的,再找這裡;同名時拒絕執行。
 datasets = "evals"
+# gateway 的呼叫紀錄(`eval add` 從這裡挑案例)。預設跟 gateway 一樣:
+#   macOS ~/Library/Application Support/ai-engineering-lab/gateway/records
+#   Linux ~/.local/share/ai-engineering-lab/gateway/records
+# gateway.toml 改過 [record] dir 的話,這裡也要改成一樣。
+# records = "~/ai-lab-records"
 
 # 每百萬 token 的美元價格,key 是實際的模型 id(不是別名)。價格會變,所以由你填,不寫死在程式裡。
 # 沒有價格的模型,費用顯示「未知」(不是 0);`--budget` 需要價格,沒有就拒絕執行。

@@ -41,9 +41,10 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 9 步:`eval add`(從呼叫紀錄挑一筆變成私有資料集的案例,UUID v7 取出時間,design §4、§12)。
-  第 1~8 步完成:資料集、`Scorer` + 確定性檢查、執行器、LLM 評審、打分流程(design §6)、統計、比較報告(design §7)、
-  CLI 與 `eval.toml`(`eval run` / `score` / `compare`,design §8)。
+- **下一步**:002 第 10 步:公開資料集(`evals/smoke.jsonl`、`evals/rust-basics.jsonl`)、E2E smoke(真的執行 eval binary,
+  上游是 wiremock:`run` → `score` → `compare`)、crate README(含 A/A 雜訊底線的做法)、第一次真的比較(cheap vs default)。
+  第 1~9 步完成:資料集、`Scorer` + 確定性檢查、執行器、LLM 評審、打分流程(design §6)、統計、比較報告(design §7)、
+  CLI 與 `eval.toml`(design §8)、`eval add`(從呼叫紀錄加案例,design §4)。
   沒評的標準記成 `Skipped`、統計時算 0 分(2026-11-09 決定,design §7)。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
