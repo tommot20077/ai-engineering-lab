@@ -72,12 +72,9 @@ python3 scripts/mutate.py target/mutations.json -- cargo test -p gateway --lib
   寫成檔名會變成 WRONG-TEST(真的發生過兩次)。
 - 腳本一定會還原檔案;跑完用 `git status` 再確認一次。
 
-手寫的之後,再用 `cargo-mutants` 對這一步改到的 crate 跑一次(gateway 約 1 分鐘):
-
-```bash
-cargo mutants -p <crate> --output target --timeout 120 --jobs 3   # 結果在 target/mutants.out/
-cargo mutants -p <crate> --file <path> --output target/m2 ...      # 只重跑一個檔案
-```
+`cargo-mutants` **不在本機跑**(D-036):對 gateway 跑一次就寫進 SSD 約 15 GB(三份副本各自完整編譯,
+每個 mutant 再重編一次)。push 之後,`.github/workflows/mutants-diff.yml` 會用 `--in-diff`
+只對這次改到的程式行跑一次;結果在第 6 節等 CI 時一起看,漏掉的在**下一個 commit** 補。
 
 兩者互補:手寫的擅長**語意**(layer 順序、路由放在哪、permit 跟不跟著串流);
 cargo-mutants 擅長**機械式**的盲點(`>` 換 `>=` 的邊界、被忽略的欄位、格式化、常數)。
@@ -91,6 +88,13 @@ cargo-mutants 擅長**機械式**的盲點(`>` 換 `>=` 的邊界、被忽略的
 
 C 類確定之後,加進 `.cargo/mutants.toml` 的 `exclude_re`,**每一條都寫理由**(不寫理由就是在藏測試缺口)。
 每週排程(`.github/workflows/mutants.yml`)會對整個 workspace 再跑一次,摘要在該次 run 的 Summary 頁。
+
+真的需要在本機重現某個 mutant 時(例如確認補的測試抓得到),只跑那一個檔案,而且限制在改到的範圍:
+
+```bash
+git diff HEAD~1 -- '*.rs' > target/step.diff
+cargo mutants --workspace --all-features --in-diff target/step.diff --file <path> --output target/m2 --jobs 1
+```
 
 ## 4. 全套檢查
 
@@ -112,8 +116,18 @@ scripts/check.sh      # fmt、clippy -D warnings、test、cargo deny、私有資
 git add <這一步的檔案>     # 不要 git add -A 整個 repo:避免把暫存檔帶進去
 git commit -m "feat(<crate>): step N - <一句話>" -m "Co-Authored-By: ..."
 git push
-gh run watch "$(gh run list --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
+# 一次 push 會觸發 CI,改到 .rs 時還有 Mutants (diff);兩個都要等。
+for id in $(gh run list --commit "$(git rev-parse HEAD)" --json databaseId -q '.[].databaseId'); do
+  gh run watch "$id" --exit-status
+done
+# 拿 mutants 的結果(只有幾 KB):
+gh run download "$(gh run list --commit "$(git rev-parse HEAD)" --workflow mutants-diff.yml \
+  --json databaseId -q '.[0].databaseId')" -n mutants-diff-out -D target/mutants-ci
+cat target/mutants-ci/missed.txt
 ```
+
+- `missed.txt` 非空時,依第 3 節分成 A / B / C,寫進導讀;A 類在下一個 commit 補測試,C 類加進 `exclude_re`。
+  `gh run list` 剛 push 完可能還查不到 run,等幾秒再查。
 
 - pre-commit / commit-msg hook 會自動做私有資料掃描(`scripts/private-scan.sh`);被擋下就移除內容,
   不要用 `--no-verify` 繞過。新 clone 要先跑一次 `scripts/install-hooks.sh`。

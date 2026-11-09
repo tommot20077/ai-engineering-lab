@@ -1,0 +1,84 @@
+name: Mutants (diff)
+
+# 每次 push 到 main,只對「這次改到的程式行」跑 cargo-mutants(D-036)。
+# 以前每一步在本機對整個 crate 跑一次,一次就寫進 SSD 約 15 GB(gateway,實測);
+# 移到這裡之後,本機只剩手寫的 scripts/mutate.py。
+# 跟每週排程(mutants.yml)一樣只回報、不擋:漏掉的 mutant 要人來分成 A / B / C(lab-step 第 3 節)。
+# 有漏掉時會出一個 warning,摘要在該次 run 的 Summary 頁,完整結果在 artifact `mutants-diff-out`。
+on:
+  push:
+    branches: [main]
+    # 只改文件的 push 沒有 Rust 程式可以突變,不必開機器。
+    paths: ["**.rs", ".cargo/mutants.toml"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 要拿到 push 之前的 commit 才能算 diff;這個 repo 很小,抓完整歷史就好。
+          fetch-depth: 0
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: diff
+        # `before` 是這次 push 之前 main 指到的 commit。第一次 push 或 force push 時它可能不存在,
+        # 那就退回只看最後一個 commit。
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          mkdir -p target
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"; else base="HEAD~1"; fi
+          echo "diff base: $base"
+          git diff "$base" HEAD -- '*.rs' > target/push.diff
+          wc -l target/push.diff
+      - name: cargo mutants
+        # exit code:0 全部抓到、2 有漏掉、3 有逾時,都是「跑完了」;其他代表真的壞掉(例如沒改過的程式測試就失敗)。
+        # diff 是空的(例如只刪了檔案)時 cargo-mutants 什麼都不做,直接回 0。
+        run: |
+          set +e
+          cargo mutants --workspace --all-features --in-diff target/push.diff \
+            --timeout 300 --jobs 2 --output target
+          code=$?
+          echo "cargo mutants exit code: $code"
+          case "$code" in
+            0|2|3) exit 0 ;;
+            *) exit "$code" ;;
+          esac
+      - name: summary
+        if: always()
+        run: |
+          out=target/mutants.out
+          count() { if [ -f "$out/$1.txt" ]; then wc -l < "$out/$1.txt"; else echo 0; fi; }
+          missed=$(count missed)
+          {
+            echo "## cargo-mutants(只看這次 push 改到的程式)"
+            echo
+            echo "| caught | missed | timeout | unviable |"
+            echo "|---|---|---|---|"
+            echo "| $(count caught) | $missed | $(count timeout) | $(count unviable) |"
+            echo
+            echo "### missed(逐一分成 A / B / C,見 .claude/skills/lab-step 第 3 節)"
+            echo
+            echo '```'
+            cat "$out/missed.txt" 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # `::warning::` 會讓 run 頁面上出現黃色提示,但 job 仍然是綠的(只回報、不擋)。
+          if [ "$missed" -gt 0 ]; then echo "::warning::cargo-mutants missed $missed mutant(s)"; fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutants-diff-out
+          path: target/mutants.out
+          retention-days: 30

@@ -2,7 +2,8 @@ name: Mutants
 
 # 每週對整個 workspace 跑一次 cargo-mutants(D-027):故意把程式改壞,看有沒有測試失敗。
 # 只回報、不擋:漏掉的 mutant 要人來判斷是 A 測試缺口、B 交給 E2E、還是 C 等價(lab-step 第 3 節),
-# 不適合變成自動的 pass/fail。每一步在本機本來就會跑一次,這裡是第二道防線,抓「忘了跑」與累積的盲點。
+# 不適合變成自動的 pass/fail。每次 push 已經由 mutants-diff.yml 只看改到的程式(D-036);
+# 這裡對整個 workspace 再跑一次,抓 diff 看不到的累積盲點(例如改了 A,讓 B 的測試失效)。
 # 已經說明過理由的 mutant 排除在 .cargo/mutants.toml。
 on:
   schedule:

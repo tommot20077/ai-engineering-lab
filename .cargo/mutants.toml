@@ -1,4 +1,4 @@
-# cargo-mutants 的設定(D-027)。本機(lab-step 第 3 節)與每週排程(.github/workflows/mutants.yml)共用。
+# cargo-mutants 的設定(D-027、D-036)。每次 push(.github/workflows/mutants-diff.yml)與每週排程(mutants.yml)共用。
 #
 # 這裡只排除「已經說明過理由」的 mutant;每加一條都要寫為什麼,否則就是在藏測試缺口。
 # 比對的是 `cargo mutants --list` 印出的完整名稱(檔名:行:欄: 描述);寫成不含行號的形式,改程式不會失效。

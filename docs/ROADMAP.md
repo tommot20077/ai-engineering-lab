@@ -48,7 +48,7 @@
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
-- **最後更新**:2026-11-01
+- **最後更新**:2026-11-09
 
 ## 決策
 
@@ -80,7 +80,7 @@
 | D-024 | gateway 強制使用 token:隨機固定 token(非 JWT)放 `.env` 的 `GATEWAY_TOKEN`、包 `SecretString`、固定時間比較(`subtle`)、沒設定就拒絕啟動;另檢查 `Host` header 擋 DNS rebinding、不開 CORS。設定檔用 TOML:`gateway.example.toml` 進 git、`gateway.toml` 不進;秘密只放 `.env`;`deny_unknown_fields` 與數值、目錄、bind 位址全部在啟動時檢查,非本機 bind 需明確 `allow_remote = true`;別名先放設定檔(改動頻率低),執行中可替換的表留到 011 | 本機連得到 ≠ 只有本人(瀏覽器、其他程式);單一使用者用 JWT 只增加金鑰與過期管理的風險;TOML 型別明確、是 Rust 慣例,YAML 有隱式型別陷阱且主流 serde 函式庫已封存;設定錯誤要在啟動時擋下 | 2026-10-31 |
 | D-025 | `/health` 公開(不檢查 token 與 Host、只回 ok),內部資訊移到需要 token 的 `/v1/status`;新增 `crates/config-loader` 給所有 binary 共用:只展開開頭 `~/`、不展開 `$VAR`、相對路徑以設定檔所在目錄為準、預設資料目錄、讀 TOML(錯誤含行號)、讀秘密環境變數成 `SecretString`;library 不依賴它 | 服務檢查帶不了 token,而 `/health` 不洩漏資訊也不花錢;002、005 也會讀設定檔,規則(特別是相對路徑)要一致 | 2026-10-31 |
 | D-026 | 開發工具:專案 skill `lab-step` 規範每一步流程;`scripts/check.sh`(與 CI 相同的檢查)、`scripts/mutate.py`(手寫 mutation,區分 CAUGHT / MISSED / WRONG-TEST / NO-BUILD);私有資料掃描改由 git hook 強制(`.githooks/` + `scripts/private-scan.sh`,關鍵字在 gitignore 的 `.private-patterns`)。使用者層級:GSD skill 全域關閉(只留 `gsd-surface` 以便恢復)、安裝 `find-skills`(安裝任何 skill 前先讀過內容) | 流程靠描述會每次做得不一樣;「絕對不能漏」的規則要由 hook 強制而不是靠記得;手寫 mutation 腳本每次重寫容易出錯 | 2026-10-31 |
-| D-027 | 導入 cargo-mutants:每一步在手寫 mutation 之後,對改到的 crate 跑一次,`missed` 分成 A 測試缺口 / B 單元測試碰不到 / C 等價或不值得測;CI 不在每次 push 跑(冷編譯太慢、結果要人判斷),改成每週排程只回報(`.github/workflows/mutants.yml`,2026-11-01 加入);說明過理由的 C 類排除在 `.cargo/mutants.toml` | 第一次對 gateway 試跑:92 個 mutant、68 秒,找出 4 個手寫 mutation 漏掉的真缺口(`base_url` 被忽略、`>`/`>=` 邊界、錯誤訊息格式、預設值常數);兩者互補 | 2026-10-31 |
+| D-027 | 導入 cargo-mutants:每一步在手寫 mutation 之後,對改到的 crate 跑一次,`missed` 分成 A 測試缺口 / B 單元測試碰不到 / C 等價或不值得測;CI 不在每次 push 跑(冷編譯太慢、結果要人判斷;**已由 D-036 改為每次 push 只跑改到的程式**),改成每週排程只回報(`.github/workflows/mutants.yml`,2026-11-01 加入);說明過理由的 C 類排除在 `.cargo/mutants.toml` | 第一次對 gateway 試跑:92 個 mutant、68 秒,找出 4 個手寫 mutation 漏掉的真缺口(`base_url` 被忽略、`>`/`>=` 邊界、錯誤訊息格式、預設值常數);兩者互補 | 2026-10-31 |
 | D-028 | 量內部函式的 benchmark:cargo feature(`bench-internals`)後面放 `#[doc(hidden)] pub mod bench` 薄包裝,只用中立型別;`[[bench]]` 設 `required-features`;CI 與 `check.sh` 的 clippy 另外跑 `--all-features`、test 用 `--all-features` | 只量公開 API 會量到 HTTP 雜訊;直接公開內部模組會打破封裝;feature 後面的程式不被編譯就會默默壞掉 | 2026-10-31 |
 | D-029 | 002 第一版只評估「一次 LLM 呼叫」;資料集、結果、統計、比較做成跟領域無關的通用部分;輸入與輸出用 enum(之後加 `Agent`、`Retrieval` variant),打分器用 trait | agent 與檢索的型別要等 003、004 才知道,現在設計是用猜的;通用的部分以後直接用,加 variant 時 compiler 會列出要改的地方 | 2026-11-01 |
 | D-030 | eval 資料集分兩層:手寫的公開資料集放 `evals/`(進 git);從呼叫紀錄來的真實案例放 repo 外的資料目錄(700/600),`eval add` 只寫私有資料集 | 真實案例是完整的個人對話,不能進公開 repo;公開資料集讓 CI smoke 與別人 clone 後有東西可跑 | 2026-11-01 |
@@ -89,6 +89,7 @@
 | D-033 | eval 直接用 `llm` library,套 Alias + Retry,不套 Record;不經過 gateway | eval 的題目不是真實使用,記進呼叫紀錄會污染階段 2 的訓練原料;不必先啟動 gateway | 2026-11-01 |
 | D-034 | eval 費用控制:事前估出最壞情況的費用、`--budget` 超過就不再送出新呼叫(沒有價格時拒絕執行);確定性檢查沒過就不叫評審;評審用低 effort、被評的回答放 prompt 最後吃 prompt cache。Batch API 與 Haiku 評審留待之後 | 費用大頭是評審(約是產生 Haiku 回答的 20 倍);eval 會反覆執行,超支要在送出前擋下 | 2026-11-01 |
 | D-035 | eval 借鏡 Harness²:並列全部通過率與部分得分;A/A 雜訊底線;打分設定不一致預設拒絕比較(`--allow-mismatch` 例外);`--resume` 接續;`--dry-run` / `--tags` / `--limit`;dev / test 切分(資料集約 60 題以上再做) | 比較要敏感也要誠實;`--budget` 會留下不完整的執行,接續才不白付錢;反覆調整會對資料集 overfit | 2026-11-01 |
+| D-036 | cargo-mutants 不在本機跑:每次 push 由 `.github/workflows/mutants-diff.yml` 用 `--in-diff` 只對改到的程式行跑(只回報、有漏掉時出 warning),結果在 lab-step 第 6 節等 CI 時看,漏掉的在下一個 commit 補;本機只留手寫的 `scripts/mutate.py`;每週全 workspace 排程不變。fmt、clippy、測試仍在本機跑 | 實測 SSD 寫入:對 gateway 跑一次 cargo-mutants 約 15 GB(106 秒),`scripts/check.sh` 約 0.1~0.6 GB;mutants 佔 Rust 寫入量九成以上。全部搬上 CI 會讓 TDD 每輪等好幾分鐘,而且 rust-analyzer 本來就在本機編譯。代價:mutation 的回饋從 commit 前變成 push 後 | 2026-11-09 |
 
 ## 模組
 
