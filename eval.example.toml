@@ -1,0 +1,49 @@
+# eval 設定檔範例。複製一份再改:cp eval.example.toml eval.toml
+# eval.toml 不進 git。API key 不放這裡,放 .env 的 ANTHROPIC_API_KEY(同 gateway)。
+# 打錯的欄位名稱會讓 eval 拒絕執行,不會被默默忽略。
+
+# 必填,至少一個。`--model`、`[judge] alias` 只能寫這裡的別名。
+# 跟 gateway.toml 各自一份;011 的執行中路由表出現後再考慮共用(design §8)。
+[aliases]
+default = "claude-sonnet-5-5"
+cheap   = "claude-haiku-5-5"
+
+[anthropic]
+# 預設 https://api.anthropic.com。只有 localhost 可以用 http(給測試用的假 server)。
+# base_url = "https://api.anthropic.com"
+
+[judge]
+# LLM 評審用的別名。評審跟被評的模型相同時,打分會印出警告(自我偏好)。
+alias = "default"
+# 評審的思考深度;thinking 按輸出計費,是評審的主要開銷(D-034)。
+effort = "low"
+# 確定性檢查沒過就不叫評審(D-034)。單次打分可以用 `eval score --judge-all` 關掉。
+skip_on_check_failure = true
+
+[run]
+# 同時進行的呼叫上限(1~64)。`--concurrency` 可以覆寫。
+concurrency = 4
+# 每次呼叫(含重試)的總時間上限。
+timeout_secs = 300
+
+[paths]
+# 執行結果與私有資料集放這裡(700 / 600)。預設:
+#   macOS ~/Library/Application Support/ai-engineering-lab/eval
+#   Linux ~/.local/share/ai-engineering-lab/eval
+# 底下是 runs/(每次執行一個目錄)與 datasets/(私有資料集,例如從呼叫紀錄加的真實案例)。
+# 相對路徑以「這個設定檔所在的目錄」為準。
+# data_dir = "~/ai-lab-eval"
+# 公開資料集(進 git)的目錄。`--dataset rust-basics` 先找私有的,再找這裡;同名時拒絕執行。
+datasets = "evals"
+
+# 每百萬 token 的美元價格,key 是實際的模型 id(不是別名)。價格會變,所以由你填,不寫死在程式裡。
+# 沒有價格的模型,費用顯示「未知」(不是 0);`--budget` 需要價格,沒有就拒絕執行。
+# cache 的讀寫 token 一律按 input 價計:估高不估低,預算才守得住。
+# 範例刻意不填數字:寫 0 的話 `--budget` 就形同虛設(花多少都算 $0)。照官方價目表填上再打開。
+# [prices."claude-haiku-5-5"]
+# input = 0.0
+# output = 0.0
+#
+# [prices."claude-sonnet-5-5"]
+# input = 0.0
+# output = 0.0

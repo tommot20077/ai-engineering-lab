@@ -65,6 +65,8 @@ regex = "1"
 sha2 = { version = "0.11", default-features = false }
 # 測試用:`ServiceExt::oneshot` 把一個請求直接丟給 router,不必開 port、不經過網路。
 tower = { version = "0.5", features = ["util"] }
+# 命令列解析(002 eval 的子命令與參數多,用 derive 寫)。已經在依賴樹裡(criterion),只多開 derive。
+clap = { version = "4", features = ["derive"] }
 # binary 用的錯誤型別:不必替每種錯誤定義 enum,`?` 一路往上丟,印出時帶完整的原因鏈。
 # library 用 thiserror(呼叫者要能 match),binary 用 anyhow(只需要印給人看)。
 anyhow = "1"

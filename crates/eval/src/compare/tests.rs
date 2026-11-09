@@ -812,3 +812,48 @@ fn the_call_error_rate_is_shown_as_a_fraction_and_a_percentage() {
     s.call_errors = 1;
     assert_eq!(errors(&s), "1/4 (25.0%)");
 }
+
+#[test]
+fn the_scoring_to_compare_is_the_one_both_runs_have() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("runs");
+    let mut meta = run_meta("cheap");
+    let a = RunDir::create(&root, &meta).unwrap();
+    meta.config.model = "default".into();
+    let b = RunDir::create(&root, &meta).unwrap();
+    let write =
+        |dir: &RunDir, name: &str| dir.scores(name).unwrap().write_meta(&score_meta()).unwrap();
+
+    // 兩邊都沒有。
+    let err = common_score_name(a.path(), b.path()).unwrap_err();
+    assert!(
+        matches!(&err, CompareError::NoCommonScores { a, b } if a.is_empty() && b.is_empty()),
+        "{err:?}"
+    );
+    assert!(
+        err.to_string().contains("A has: none; B has: none"),
+        "{err}"
+    );
+
+    // 各有一份,但名字不同:不猜。
+    write(&a, "sonnet");
+    write(&b, "haiku");
+    let err = common_score_name(a.path(), b.path()).unwrap_err();
+    assert!(
+        matches!(&err, CompareError::NoCommonScores { a, b } if a == &["sonnet"] && b == &["haiku"]),
+        "{err:?}"
+    );
+
+    // 剛好一份共同的。
+    write(&b, "sonnet");
+    assert_eq!(common_score_name(a.path(), b.path()).unwrap(), "sonnet");
+
+    // 不只一份:請使用者指定。
+    write(&a, "checks");
+    write(&b, "checks");
+    let err = common_score_name(a.path(), b.path()).unwrap_err();
+    assert!(
+        matches!(&err, CompareError::AmbiguousScores { common } if common == &["checks", "sonnet"]),
+        "{err:?}"
+    );
+}

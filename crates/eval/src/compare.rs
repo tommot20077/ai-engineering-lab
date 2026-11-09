@@ -45,6 +45,16 @@ pub enum CompareError {
     ScoresMissing { path: PathBuf, name: String },
 
     #[error(
+        "the two runs have no scoring in common (A has: {}; B has: {}); score both with the same --name first",
+        list_or_none(a),
+        list_or_none(b)
+    )]
+    NoCommonScores { a: Vec<String>, b: Vec<String> },
+
+    #[error("both runs have several scorings ({}); pick one with --scores", common.join(", "))]
+    AmbiguousScores { common: Vec<String> },
+
+    #[error(
         "the two scores were made with different settings, so they are not comparable:\n{}\npass --allow-mismatch to compare anyway",
         differences.iter().map(|d| format!("  - {d}")).collect::<Vec<_>>().join("\n")
     )]
@@ -179,6 +189,26 @@ pub enum CompareWarning {
 
     #[error("tags are not shown: the dataset could not be read ({reason})")]
     TagsUnavailable { reason: String },
+}
+
+/// 沒指定要比哪一份打分時:兩邊都有的那一份。沒有、或不只一份,就列出來請使用者指定(不猜)。
+pub fn common_score_name(a: &Path, b: &Path) -> Result<String, CompareError> {
+    let names_a = RunDir::open(a)?.score_names()?;
+    let names_b = RunDir::open(b)?.score_names()?;
+    let common: Vec<String> = names_a
+        .iter()
+        .filter(|name| names_b.contains(name))
+        .cloned()
+        .collect();
+    // slice pattern:`[only]` 只在剛好一個元素時符合。Java 對照:`if (list.size() == 1) list.get(0)`,但不會拿錯索引。
+    match common.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err(CompareError::NoCommonScores {
+            a: names_a,
+            b: names_b,
+        }),
+        _ => Err(CompareError::AmbiguousScores { common }),
+    }
 }
 
 /// 讀一次執行與它名為 `name` 的打分。
@@ -662,6 +692,14 @@ fn latency(side: &Side) -> String {
 fn errors(stats: &Stats) -> String {
     let rate = (stats.responses > 0).then(|| stats.call_errors as f64 / stats.responses as f64);
     format!("{}/{} ({})", stats.call_errors, stats.responses, pct(rate))
+}
+
+fn list_or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_owned()
+    } else {
+        items.join(", ")
+    }
 }
 
 fn list_or_dash(items: &[String]) -> String {

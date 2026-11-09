@@ -41,11 +41,10 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 8 步:CLI 與 `eval.toml`、composition root(`clap` derive;`run` / `score` / `compare`,design §8)。
-  第 1~7 步完成:資料集、`Scorer` + 確定性檢查、執行器(`run::start` / `resume`)、LLM 評審(`score::Judge`)、
-  打分流程(`score::score` / `estimate`,design §6)、統計(`stats`)、比較報告(`compare::load` / `compare`,design §7)。
+- **下一步**:002 第 9 步:`eval add`(從呼叫紀錄挑一筆變成私有資料集的案例,UUID v7 取出時間,design §4、§12)。
+  第 1~8 步完成:資料集、`Scorer` + 確定性檢查、執行器、LLM 評審、打分流程(design §6)、統計、比較報告(design §7)、
+  CLI 與 `eval.toml`(`eval run` / `score` / `compare`,design §8)。
   沒評的標準記成 `Skipped`、統計時算 0 分(2026-11-09 決定,design §7)。
-  `--dry-run` 的估價在 library(`run::estimate`、`score::estimate`),指令本身在第 8 步的 CLI。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
@@ -161,6 +160,9 @@
 - **私有目錄與「處理寫了一半的行」有兩份**:llm `JsonlWriter`(私有函式)與 eval `store.rs` 各寫了一份(約 20 行)。
   注意兩邊對半行的處理不同:llm 補換行封住(讀取端跳過壞行,D-021);eval 截掉(讀取端把中間的壞行當成檔案損壞而報錯)。
   出現第三個使用者時(例如 006 的紀錄分析),抽成共用的小工具;規則一樣:目錄 700、檔案 600、別人讀得到就拒絕。
+- **錯誤訊息裡的原因印了兩次**:eval 的 `StoreError::Io`、`DatasetError::Read` 的訊息裡含 `{source}`,同時又標成 `#[source]`,
+  CLI 用 anyhow 印出時會變成「…: No such file」加上「Caused by: No such file」。兩者擇一(建議訊息不含原因,交給原因鏈印)。
+  第 8 步做 CLI 時發現,不影響行為。
 - **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
   `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 

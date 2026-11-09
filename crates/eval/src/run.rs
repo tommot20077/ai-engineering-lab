@@ -55,7 +55,9 @@ pub struct ExecOptions {
 }
 
 /// 每百萬 token 的美元價格。由使用者填在 `eval.toml`,不寫死在程式裡(價格會變)。
+// `deny_unknown_fields`:設定檔裡打成 `ouput` 要報錯,不能變成「沒有輸出價格」。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Price {
     pub input: f64,
     pub output: f64,

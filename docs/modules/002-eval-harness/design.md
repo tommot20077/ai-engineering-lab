@@ -293,6 +293,28 @@ output = 0.0
 
 秘密(`ANTHROPIC_API_KEY`)只從 `.env` / 環境變數讀,跟 gateway 相同(config-loader)。
 
+### CLI 的細節(第 8 步實作時定下)
+
+- **`main.rs` 是唯一讀設定檔、環境變數、`.env` 的地方**;設定的檢查(`config.rs`)與命令列的規則(`cli.rs`)都是純函式,有單元測試。
+  真的呼叫模型的全鏈路由第 10 步的 E2E 測(上游是 wiremock)。
+- **只有真的要呼叫模型時才讀 API key**:`--dry-run`、只做確定性檢查(`--no-judge`)、`compare` 都不需要。
+  這些情況用一個「被呼叫就回傳錯誤」的 provider,保證不會偷偷送出請求。
+- **設定檔**:`[judge] alias` 必填;`[run] concurrency` 1~64(多打一個 0 不能一口氣送出幾百個呼叫);
+  `[paths] data_dir`(底下是 `runs/` 與 `datasets/`)與 `datasets`(公開資料集,預設 `evals`);
+  `[prices]` 的 key 是實際的模型 id,寫成別名會被擋下並提示正確的 id;價格要有限、不是負數(0 可以)。
+  範例檔刻意不填價格:填 0 會讓 `--budget` 形同虛設。effort 的合法值由 API 決定,只擋空字串。
+  `anthropic.base_url` 的規則(只准 https,明文 http 只限本機)跟 gateway 共用,在 config-loader。
+- **`--dataset`**:含 `/` 或以 `.jsonl` 結尾就是路徑(轉成絕對路徑,接續時才找得到);否則是名稱,先找私有再找公開,
+  兩邊都有就拒絕;私有資料集的目錄別人讀得到也拒絕;名稱只能用英數字與 `.` `_` `-`。
+- **別名不在 `[aliases]` 裡就先擋下**:不然每一次呼叫都會被 Alias 拒絕,留下一個全是錯誤的執行目錄。
+- **`eval run --resume`** 跟 `--dataset`、`--model`、`--repeats`、`--tags`、`--limit`、`--label` 互斥(設定從 `meta.json` 讀回來);
+  `--retry-errors` 只能搭配 `--resume`。`--repeats` 1~100、`--limit` 至少 1、`--budget` 要是正的有限數。
+- **`eval score`**:評審預設是 `[judge] alias`;`--no-judge` 只做確定性檢查(案例有評分標準時拒絕);
+  打分名稱預設是評審別名,只做檢查時是 `checks`。同一個名字再打一次 = 接續(§6)。
+- **`eval compare`** 不需要設定檔;沒給 `--scores` 時用兩邊都有的那一份打分,沒有或不只一份就列出來請使用者指定。
+- **執行記錄的 git commit**:有沒 commit 的改動時加上 `-dirty`(那樣的結果重現不出來);不在 git repo 裡就不記。
+- 結果印到 stdout,提示與警告印到 stderr。
+
 ### dev / test 切分(D-035,題目夠多再實作)
 
 反覆調 prompt、挑分數最高的那個版本時,會不知不覺挑到「運氣最好」的那一個(winner's curse):

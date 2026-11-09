@@ -15,3 +15,6 @@ CLAUDE.local.md
 /gateway.toml
 # 私有資料掃描的關鍵字(一行一個正規表示式),只存在本機。見 scripts/private-scan.sh。
 /.private-patterns
+# 個人的 eval 設定;範例是 eval.example.toml。萬一把 eval 的結果目錄設在 repo 裡,也不能進 git(design §9)。
+/eval.toml
+/eval-runs/

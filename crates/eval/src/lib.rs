@@ -4,7 +4,9 @@
 //! Eval 不是測試(D-007):測試是確定性的 pass/fail;eval 是對資料集打分、看趨勢。
 
 mod case;
+pub mod cli;
 pub mod compare;
+pub mod config;
 mod dataset;
 pub mod run;
 pub mod score;

@@ -197,6 +197,32 @@ impl RunDir {
     }
 }
 
+impl RunDir {
+    /// 這次執行有哪些打分(依名稱排序)。以 `<name>.meta.json` 為準:有 meta 才算一份打分。
+    pub fn score_names(&self) -> Result<Vec<String>, StoreError> {
+        let dir = self.path.join(SCORES);
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            // 還沒打過分(連 scores/ 都沒有)不是錯誤。
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(source) => return Err(StoreError::Io { path: dir, source }),
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            let name = entry.at(&dir)?.file_name();
+            // 檔名不是 UTF-8 的不可能是我們寫的(打分名稱只允許英數字),略過。
+            if let Some(name) = name.to_str().and_then(|n| n.strip_suffix(".meta.json"))
+                && valid_score_name(name)
+            {
+                names.push(name.to_owned());
+            }
+        }
+        // `read_dir` 的順序由檔案系統決定:排序後輸出才固定。
+        names.sort();
+        Ok(names)
+    }
+}
+
 /// 一份打分的兩個檔案。行與 meta 的型別由 `score` 模組決定,這裡只管檔案怎麼讀寫(泛型)。
 #[derive(Debug)]
 pub struct ScoreFiles {
@@ -707,5 +733,26 @@ mod tests {
         for good in ["a", "sonnet-judge", "judge_2026.11", "0", &"a".repeat(64)] {
             assert!(dir.scores(good).is_ok(), "{good:?} should be accepted");
         }
+    }
+
+    #[test]
+    fn score_names_are_listed_from_their_meta_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = RunDir::create(&tmp.path().join("runs"), &meta("cheap")).unwrap();
+        // 還沒有任何打分(連 scores/ 都沒有)。
+        assert!(dir.score_names().unwrap().is_empty());
+
+        // 五個名稱:`read_dir` 的順序由檔案系統決定,只有兩個的話,沒排序也可能碰巧是對的。
+        for name in ["sonnet", "checks", "zeta", "a2", "b"] {
+            dir.scores(name).unwrap().write_meta(&json!({})).unwrap();
+        }
+        // 只有行、沒有 meta 的不算;其他檔案也不算。
+        dir.scores("half").unwrap().appender().unwrap();
+        std::fs::write(dir.path().join("scores/notes.txt"), "").unwrap();
+
+        assert_eq!(
+            dir.score_names().unwrap(),
+            ["a2", "b", "checks", "sonnet", "zeta"]
+        );
     }
 }
