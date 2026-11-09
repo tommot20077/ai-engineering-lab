@@ -85,6 +85,10 @@ Go 專案的規劃文件 : 程式 ≈ 17 : 1,拖慢學習回饋,所以這裡不�
   mutation 檢查(`scripts/mutate.py`)→ `scripts/check.sh` → 文件 → commit / push / CI → 導讀。
 - **私有資料掃描由 git hook 強制**(`.githooks/`,新 clone 先跑 `scripts/install-hooks.sh`):
   pre-commit 掃暫存區、commit-msg 掃訊息。關鍵字在 gitignore 的 `.private-patterns`。不准用 `--no-verify` 繞過。
+  雲端 session 沒有 `.private-patterns`,改讀環境變數 `PRIVATE_PATTERNS`;兩者都沒有時拒絕 commit(D-037)。
+- **不准把環境變數印進對話**:雲端的 API key 只能放在環境變數。`.claude/settings.json` 的 PreToolUse hook
+  (`scripts/guard-env.sh`)會擋 `env`、`printenv`、`$..._KEY`;要確認有沒有設定,用 `[[ -v 名稱 ]]`。
+  它也會擋到「指令文字裡剛好提到這些字」的情況(例如用 heredoc 改文件):改用 Write / Edit 工具,或把指令寫進檔案再執行。
 
 ## 技術選型(預設,遇到再確認)
 

@@ -31,6 +31,14 @@ else
   echo "cargo-deny is not installed locally; CI will run it (cargo install cargo-deny)"
 fi
 
+step "guard tests (private scan + env guard)"
+# 只印失敗的那幾行;全部通過時只印一行。
+if ! out=$(scripts/test-guards.sh); then
+  grep '^FAIL' <<<"$out"
+  exit 1
+fi
+echo "$(grep -c '^ok' <<<"$out") passed"
+
 step "private scan (all tracked files)"
 scripts/private-scan.sh --all
 

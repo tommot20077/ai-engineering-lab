@@ -8,6 +8,8 @@
 # 關鍵字分兩種:
 #   - 秘密的格式(API key):直接寫在下面,公開也無妨。
 #   - 私有專案的名稱:放在 gitignore 的 .private-patterns,一行一個正規表示式,只存在本機。
+#     雲端 session 是重新 clone 的,沒有這個檔案:改從環境變數 PRIVATE_PATTERNS 讀
+#     (用 `|` 或換行分隔,設在雲端環境的設定裡)。兩者都沒有時,雲端直接拒絕(fail-closed)。
 # 比對不分大小寫。命中時只印出「檔案:行號」,不印內容:萬一命中的是 key,不要再印到終端機上。
 
 set -euo pipefail
@@ -19,13 +21,32 @@ secret_re="${key_prefix}-api|${key_prefix}-[A-Za-z0-9_-]{30,}"
 patterns_file="$root/.private-patterns"
 
 re="$secret_re"
+private_re=""
 if [[ -f "$patterns_file" ]]; then
   private_re=$(grep -vE '^[[:space:]]*(#|$)' "$patterns_file" | paste -sd '|' - || true)
-  if [[ -n "$private_re" ]]; then
-    re="$re|$private_re"
-  fi
+elif [[ -n "${PRIVATE_PATTERNS:-}" ]]; then
+  # 換行也當分隔;再把多餘的 `|` 收掉。空的選項(`a||b`、結尾的 `|`)會比對到每一行,要先清掉。
+  private_re=$(printf '%s' "$PRIVATE_PATTERNS" | tr '\n' '|' | sed -E 's/\|+/|/g; s/^\|//; s/\|$//')
+fi
+
+if [[ -n "$private_re" ]]; then
+  re="$re|$private_re"
+elif [[ "${CLAUDE_CODE_REMOTE:-}" == "true" ]]; then
+  # 雲端在沒有關鍵字的情況下 commit,私有名稱就會直接進公開 repo:寧可擋下(寫入路徑 fail-loud)。
+  echo "private-scan: no .private-patterns and no PRIVATE_PATTERNS in this cloud session; refusing." >&2
+  echo "Set PRIVATE_PATTERNS in the cloud environment settings (see README)." >&2
+  exit 1
 else
   echo "private-scan: $patterns_file not found; scanning for secrets only" >&2
+fi
+
+# 規則本身寫錯(例如少了右括號)時,grep 會回 2;下面的 `|| true` 會把它吞掉,
+# 結果是「什麼都沒擋」卻顯示通過。所以先試一次,壞掉就停。不印出規則內容:它本身就是私有的。
+rc=0
+grep -iqE "$re" </dev/null 2>/dev/null || rc=$?
+if [[ $rc -eq 2 ]]; then
+  echo "private-scan: the patterns are not a valid regular expression; refusing." >&2
+  exit 1
 fi
 
 hits=()

@@ -77,13 +77,40 @@ cargo run -p gateway --release    # 用法見 crates/gateway/README.md
 | | |
 |---|---|
 | 測試 | 單元、snapshot(`insta`)、property(`proptest`)、整合(`wiremock`)、E2E(真的執行 binary)、live(手動) |
-| Mutation | 每一步都故意把程式改壞,確認有測試會失敗(手寫 + `cargo-mutants`);每週再對整個 workspace 跑一次 |
+| Mutation | 每一步都故意把程式改壞,確認有測試會失敗:手寫的在本機,`cargo-mutants` 在每次 push 時只看改到的程式行;每週再對整個 workspace 跑一次 |
 | 效能 | 只用 `criterion` 的數字談優化;結果寫在各 crate 的 README |
 | 安全 | `unsafe` 全面禁止;密鑰包在 `SecretString`,不進 log 與 `Debug`;外部輸入一律驗證、設上限 |
-| CI | `fmt`、`clippy -D warnings`(含全部 feature)、`test`、`cargo deny`(供應鏈與授權) |
+| CI | `fmt`、`clippy -D warnings`(含全部 feature)、`test`、護欄測試(`scripts/test-guards.sh`)、`cargo deny`(供應鏈與授權) |
 
 送出變更前跑 `scripts/check.sh`(跟 CI 一樣的檢查)。clone 之後先跑一次 `scripts/install-hooks.sh`:
-commit 前會自動掃描暫存區,擋下 API key 之類的秘密。
+commit 前會自動掃描暫存區,擋下 API key 之類的秘密。用 Claude Code 開這個 repo 時,
+`.claude/settings.json` 的 SessionStart hook 會自動做這件事。
+
+### 在 Claude Code 雲端開發
+
+雲端 session 每次都從 GitHub 重新 clone,gitignore 的檔案(`.env`、`.private-patterns`)都不在。
+在 claude.ai/code 的環境設定裡:
+
+- **網路**:預設的 Trusted 就夠(已包含 crates.io、rustup、GitHub)。
+- **Setup script**:裝上 `rust-toolchain.toml` 鎖定的版本。
+
+  ```bash
+  #!/bin/bash
+  set -euo pipefail
+  if ! command -v rustup >/dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+    source "$HOME/.cargo/env"
+  fi
+  rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+  ```
+
+- **環境變數**:
+  - `PRIVATE_PATTERNS`:私有資料掃描的關鍵字(`|` 或換行分隔),取代本機的 `.private-patterns`。
+    雲端兩者都沒有時,掃描會**直接拒絕 commit**,不會在沒保護的狀態下寫進公開 repo。
+  - `ANTHROPIC_API_KEY`:只有 live test 與真的 eval 需要。Anthropic 的 API 不能用 network secret,
+    只能放成環境變數,使用這個環境的人都讀得到:請用**專用、有花費上限**的 key,環境也只給自己用。
+- `.claude/settings.json` 的 PreToolUse hook(`scripts/guard-env.sh`)會擋下 `env`、`printenv`、
+  `echo $..._KEY` 這類把環境變數印進對話的指令。這是護欄,不是安全邊界。
 
 ## 授權
 

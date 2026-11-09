@@ -4,6 +4,6 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 git config core.hooksPath .githooks
 echo "git hooks installed (core.hooksPath = .githooks)"
-if [[ ! -f .private-patterns ]]; then
-  echo "note: .private-patterns not found; the scan will only look for secrets" >&2
+if [[ ! -f .private-patterns && -z "${PRIVATE_PATTERNS:-}" ]]; then
+  echo "note: no .private-patterns and no PRIVATE_PATTERNS; the scan will only look for secrets" >&2
 fi

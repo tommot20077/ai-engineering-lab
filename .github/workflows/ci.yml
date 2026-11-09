@@ -30,6 +30,9 @@ jobs:
       # `--locked`:Cargo.lock 跟 Cargo.toml 對不上就失敗,不自動更新。忘了 commit lock 檔時,CI 會抓到。
       - name: test
         run: cargo test --workspace --all-features --locked
+      # 私有資料掃描與「擋下印出環境變數」這兩道護欄的測試(D-037)。
+      - name: guard tests
+        run: scripts/test-guards.sh
 
   deny:
     runs-on: ubuntu-latest
