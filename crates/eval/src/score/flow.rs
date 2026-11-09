@@ -478,7 +478,7 @@ fn prepare(run_dir: &Path, setup: &ScoreSetup<'_>) -> Result<Prepared, ScoreErro
 }
 
 /// 每個 (案例, 抽樣) 最後一筆回應的索引,依檔案順序。
-fn latest(responses: &[ResponseLine]) -> Vec<usize> {
+pub(crate) fn latest(responses: &[ResponseLine]) -> Vec<usize> {
     let last: HashMap<(&str, u32), usize> = responses
         .iter()
         .enumerate()
@@ -492,7 +492,7 @@ fn latest(responses: &[ResponseLine]) -> Vec<usize> {
 }
 
 /// (案例, 抽樣) → 這份打分裡最後一筆打分。
-fn current_scores(lines: &[ScoreLine]) -> HashMap<(&str, u32), &ScoreLine> {
+pub(crate) fn current_scores(lines: &[ScoreLine]) -> HashMap<(&str, u32), &ScoreLine> {
     lines
         .iter()
         .map(|line| ((line.case_id.as_str(), line.sample), line))
@@ -512,7 +512,7 @@ fn criteria_sha256(dataset: &Dataset, config: &RunConfig) -> String {
 }
 
 /// 兩份設定哪裡不同,寫成給人看的句子。
-fn differences(old: &ScoreConfig, new: &ScoreConfig) -> Vec<String> {
+pub(crate) fn differences(old: &ScoreConfig, new: &ScoreConfig) -> Vec<String> {
     let judge = |j: &Option<JudgeConfig>| match j {
         None => "none".to_owned(),
         Some(j) => format!("{} (effort {})", j.model, j.effort),

@@ -3,7 +3,7 @@
 //! 每個打分器看一個案例與它的輸出,對每一條標準給出一個判決(`Verdict`):通過、不通過,或打分器本身出錯。
 
 mod check;
-mod flow;
+pub(crate) mod flow;
 mod judge;
 
 use futures::future::BoxFuture;

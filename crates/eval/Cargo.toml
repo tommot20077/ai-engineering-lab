@@ -28,5 +28,7 @@ jiff.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# `compare` 報告的文字輸出用 snapshot 測:整份報告存成檔案,改了格式要人看過 diff 再接受。
+insta.workspace = true
 # 測試多開:`#[tokio::test]` 需要 macros 與 runtime;test-util 讓時間可以「暫停、快轉」,逾時測試不必真的等。
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

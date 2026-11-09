@@ -83,6 +83,13 @@ pub enum Output {
 }
 
 impl Output {
+    /// 實際回答的模型 id(別名換過之後的)。
+    pub fn model(&self) -> &str {
+        match self {
+            Output::Chat(response) => &response.model,
+        }
+    }
+
     /// 給確定性檢查用的文字:所有 text 區塊,用換行接起來。thinking 與工具呼叫不算(那不是給人看的回答)。
     pub fn text(&self) -> String {
         match self {

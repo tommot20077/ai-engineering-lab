@@ -1,0 +1,37 @@
+---
+source: crates/eval/src/compare/tests.rs
+assertion_line: 536
+expression: report.to_string()
+---
+Compare
+  A  cheap (claude-haiku-5-5)  label: old system prompt
+     /runs/cheap
+  B  default (claude-sonnet-5-5)
+     /runs/default
+  scores `j`: judge default (effort low), judge skipped when a check fails
+
+warning: only 3 paired case(s): the interval is wide; aim for 30 or more
+
+                     A       B     B - A  95% CI               n
+all-pass         33.3%   66.7%     +33.3  [+0.0, +100.0]       3  no detectable difference
+partial          50.0%   83.3%     +33.3  [+0.0, +50.0]        3  no detectable difference
+(A and B: means over the n paired cases; paired bootstrap, 10000 resamples, seed 0x5eed)
+only in A: only-a
+
+improved (A -> B):
+  ownership-001               0.0% -> 100.0%
+
+by tag (A -> B):
+  lifetimes       n=1   all-pass 0.0% -> 0.0%   partial 0.0% -> 50.0%
+  ownership       n=2   all-pass 50.0% -> 100.0%   partial 75.0% -> 100.0%
+
+criteria that changed (A -> B):
+  lifetimes-001  judge: c   0.0% -> 100.0%
+  ownership-001  judge: d   0.0% -> 100.0%
+
+                  A               B
+cost              $0.1200         $0.1500
+  per case        $0.0300         $0.0500
+latency p50/p95   200/400 ms      200/300 ms
+call errors       0/4 (0.0%)      0/3 (0.0%)
+incomplete        0               0

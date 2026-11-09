@@ -41,10 +41,9 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 7 步:`compare` 報告(打分設定一致性、雜訊底線標註、翻轉案例、依 tag 分組、成本、延遲分位數,design §7)。
-  第 1 步(資料集)、第 2 步(`Scorer` + 確定性檢查)、第 3 步(執行器:`run::start` / `resume`、執行目錄、預算、篩選)、
-  第 4 步(LLM 評審 `score::Judge`)、第 5 步(打分流程 `score::score` / `estimate`、`scores/<name>.jsonl`,規則見 design §6)、
-  第 6 步(`stats`:兩種指標、每條標準的通過率、配對、paired bootstrap)完成;
+- **下一步**:002 第 8 步:CLI 與 `eval.toml`、composition root(`clap` derive;`run` / `score` / `compare`,design §8)。
+  第 1~7 步完成:資料集、`Scorer` + 確定性檢查、執行器(`run::start` / `resume`)、LLM 評審(`score::Judge`)、
+  打分流程(`score::score` / `estimate`,design §6)、統計(`stats`)、比較報告(`compare::load` / `compare`,design §7)。
   沒評的標準記成 `Skipped`、統計時算 0 分(2026-11-09 決定,design §7)。
   `--dry-run` 的估價在 library(`run::estimate`、`score::estimate`),指令本身在第 8 步的 CLI。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
