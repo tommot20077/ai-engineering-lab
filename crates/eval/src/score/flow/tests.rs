@@ -260,7 +260,7 @@ fn verdict(result: VerdictResult) -> Verdict {
 
 #[test]
 fn a_response_passes_only_when_every_verdict_passes() {
-    use VerdictResult::{Error, Fail, Pass};
+    use VerdictResult::{Error, Fail, Pass, Skipped};
     let r = |vs: &[VerdictResult]| result_of(&vs.iter().map(|v| verdict(*v)).collect::<Vec<_>>());
     assert_eq!(r(&[Pass, Pass]), ScoreResult::Pass);
     assert_eq!(r(&[Pass, Fail]), ScoreResult::Fail);
@@ -269,6 +269,9 @@ fn a_response_passes_only_when_every_verdict_passes() {
     assert_eq!(r(&[Pass, Error]), ScoreResult::Incomplete);
     // 沒有任何證據,不能說它通過。
     assert_eq!(r(&[]), ScoreResult::Incomplete);
+    // 沒評的標準也不能當成通過。
+    assert_eq!(r(&[Pass, Skipped]), ScoreResult::Incomplete);
+    assert_eq!(r(&[Fail, Skipped]), ScoreResult::Fail);
 }
 
 #[tokio::test(start_paused = true)]
@@ -316,13 +319,15 @@ async fn checks_only_scoring_writes_one_line_per_response_and_a_meta() {
             reason: Some(r#""x" not found"#.into()),
         }]
     );
-    // 呼叫失敗:沒有回答可以評,也就沒有判決。
-    assert!(
-        got.iter()
-            .find(|l| l.case_id == "b")
-            .unwrap()
-            .verdicts
-            .is_empty()
+    // 呼叫失敗:沒有回答可以評,每一條標準都記成 Skipped(統計時算 0 分,design §7)。
+    assert_eq!(
+        got.iter().find(|l| l.case_id == "b").unwrap().verdicts,
+        [Verdict {
+            scorer: "check".into(),
+            criterion: r#"contains "x""#.into(),
+            result: VerdictResult::Skipped,
+            reason: Some("no answer: the model call failed".into()),
+        }]
     );
     assert!(
         got.iter()
@@ -1080,4 +1085,82 @@ fn the_latest_response_of_each_sample_is_listed_in_file_order() {
 
     // a 與 c 各有兩筆,取後面那筆;其餘依檔案順序。
     assert_eq!(latest(&responses), [1, 3, 4, 5, 6]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn criteria_that_were_not_judged_are_recorded_as_skipped() {
+    // 打分檔要自己就完整:統計(design §7:沒評的算 0 分)與 compare 不必再讀資料集,
+    // 資料集之後又改了也不會對不上。不是假造一個 Fail:結果是 Skipped,理由寫清楚為什麼沒評。
+    let s = setup(
+        &[case_line("a", &["r1", "r2"])],
+        &[("a", 0, Some("no")), ("a", 1, None)],
+    );
+    let fake = FakeJudge::new("judge-id");
+    let j = judge(&fake, "default");
+
+    score(
+        &s.run,
+        &setup_with("j", Some(&j)),
+        options(),
+        t("2026-11-02T00:00:00Z"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(fake.calls(), 0);
+    let got = lines(&s.run, "j");
+    let table = |sample: u32| -> Vec<(String, String, VerdictResult, String)> {
+        got.iter()
+            .find(|l| l.sample == sample)
+            .unwrap()
+            .verdicts
+            .iter()
+            .map(|v| {
+                (
+                    v.scorer.clone(),
+                    v.criterion.clone(),
+                    v.result,
+                    v.reason.clone().unwrap_or_default(),
+                )
+            })
+            .collect()
+    };
+    let row = |scorer: &str, criterion: &str, result, reason: &str| {
+        (
+            scorer.to_owned(),
+            criterion.to_owned(),
+            result,
+            reason.to_owned(),
+        )
+    };
+    let skipped = "not judged: a check already failed";
+    // 檢查沒過:評分標準沒評。
+    assert_eq!(
+        table(0),
+        [
+            row(
+                "check",
+                r#"contains "x""#,
+                VerdictResult::Fail,
+                r#""x" not found"#
+            ),
+            row("judge", "r1", VerdictResult::Skipped, skipped),
+            row("judge", "r2", VerdictResult::Skipped, skipped),
+        ]
+    );
+    // 呼叫失敗:每一條都沒評。
+    let no_answer = "no answer: the model call failed";
+    assert_eq!(
+        table(1),
+        [
+            row(
+                "check",
+                r#"contains "x""#,
+                VerdictResult::Skipped,
+                no_answer
+            ),
+            row("judge", "r1", VerdictResult::Skipped, no_answer),
+            row("judge", "r2", VerdictResult::Skipped, no_answer),
+        ]
+    );
 }

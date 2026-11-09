@@ -294,16 +294,30 @@ async fn score_one(
     };
     let output = match &line.result {
         CallResult::Ok { output } => output,
-        // 沒有回答可以評:算沒通過(design §5),不叫評審。
-        CallResult::Error { .. } => return Some(scored),
+        // 沒有回答可以評:算沒通過(design §5),不叫評審。每一條標準都記成沒評。
+        CallResult::Error { .. } => {
+            let checks = case
+                .checks
+                .iter()
+                .map(|check| skipped(Checks.name(), &check.to_string(), NO_ANSWER));
+            // 有評分標準就一定有評審(`prepare` 擋過),所以這裡的名字一定拿得到。
+            let judge = setup.judge.map_or("judge", |j| j.name());
+            let rubric = case.rubric.iter().map(|c| skipped(judge, c, NO_ANSWER));
+            scored.verdicts = checks.chain(rubric).collect();
+            return Some(scored);
+        }
     };
 
     scored.verdicts = Checks.score(case, output).await.verdicts;
     let judge = setup.judge.filter(|_| !case.rubric.is_empty());
     match judge {
         None => {}
-        Some(_) if setup.skip_on_check_failure && any_check_failed(&scored.verdicts) => {
+        Some(judge) if setup.skip_on_check_failure && any_check_failed(&scored.verdicts) => {
             scored.judge = JudgeStatus::Skipped;
+            let rubric = case.rubric.iter();
+            scored
+                .verdicts
+                .extend(rubric.map(|c| skipped(judge.name(), c, CHECK_FAILED)));
         }
         Some(judge) => {
             // 在「開始」時檢查,已經在進行的照樣做完(同 `run`)。
@@ -523,18 +537,31 @@ fn differences(old: &ScoreConfig, new: &ScoreConfig) -> Vec<String> {
     out
 }
 
+const NO_ANSWER: &str = "no answer: the model call failed";
+const CHECK_FAILED: &str = "not judged: a check already failed";
+
+/// 一條沒評的標準。結果是 `Skipped` 而不是 `Fail`:不假造判決,但統計時算 0 分(design §7)。
+fn skipped(scorer: &str, criterion: &str, reason: &str) -> Verdict {
+    Verdict {
+        scorer: scorer.to_owned(),
+        criterion: criterion.to_owned(),
+        result: VerdictResult::Skipped,
+        reason: Some(reason.to_owned()),
+    }
+}
+
 /// 確定性檢查有沒有「沒過」的。檢查自己出錯(`Error`)不算:評審的結果還能把它從不完整變成不通過。
 fn any_check_failed(verdicts: &[Verdict]) -> bool {
     verdicts.iter().any(|v| v.result == VerdictResult::Fail)
 }
 
-/// 一筆回應的結果:有不通過就是不通過(評審出錯也改變不了);沒有不通過但有出錯 = 不完整;全部通過才是通過。
-/// 一條判決都沒有也是不完整:沒有證據就不能說它通過(fail-closed)。
+/// 一筆回應的結果:有不通過就是不通過(評審出錯也改變不了);沒有不通過但有出錯或沒評的 = 不完整;
+/// 全部通過才是通過。一條判決都沒有也是不完整:沒有證據就不能說它通過(fail-closed)。
 fn result_of(verdicts: &[Verdict]) -> ScoreResult {
     let has = |result| verdicts.iter().any(|v| v.result == result);
     if has(VerdictResult::Fail) {
         ScoreResult::Fail
-    } else if verdicts.is_empty() || has(VerdictResult::Error) {
+    } else if verdicts.is_empty() || has(VerdictResult::Error) || has(VerdictResult::Skipped) {
         ScoreResult::Incomplete
     } else {
         ScoreResult::Pass
