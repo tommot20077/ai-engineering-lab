@@ -626,11 +626,15 @@ impl fmt::Display for Report {
     }
 }
 
+/// 看區間落在 0 的哪一邊,不看觀察到的差:「有沒有差異」本來就是區間決定的。
+/// (cargo-mutants:原本用 `diff > 0.0` 分好壞,換成 `>=` 時結果一樣,因為區間不含 0 時 diff 不會剛好是 0。)
 fn verdict(i: &Interval) -> &'static str {
-    match (i.excludes_zero(), i.diff > 0.0) {
-        (false, _) => "no detectable difference",
-        (true, true) => "B is better",
-        (true, false) => "B is worse",
+    if i.low > 0.0 {
+        "B is better"
+    } else if i.high < 0.0 {
+        "B is worse"
+    } else {
+        "no detectable difference"
     }
 }
 

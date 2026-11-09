@@ -697,3 +697,118 @@ mod load_from_disk {
         assert!(loaded.tags_unavailable.is_some());
     }
 }
+
+#[test]
+fn cost_per_case_is_unknown_without_cases() {
+    // (cargo-mutants:`cases > 0` 換成 `>=` 時,0 個案例會得到 $inf 而沒有測試失敗。)
+    let mut a = simple("cheap", &[]);
+    a.run.summary = None;
+    let mut report = compare(&a, &simple("default", &[]), false).unwrap();
+    report.a.run_cost_usd = Some(0.1);
+    report.a.score_cost_usd = Some(0.1);
+    assert!(report.a.total_cost_usd().is_some());
+    assert_eq!(report.a.cost_per_case_usd(), None);
+}
+
+#[test]
+fn unscored_responses_alone_make_the_scores_incomplete() {
+    // (cargo-mutants:`missing > 0` 換成 `< 0` 時沒有測試失敗:之前的測試同時設了 incomplete。)
+    let a = simple("cheap", &[("x", true)]);
+    let mut b = simple("default", &[("x", true)]);
+    if let Some(summary) = &mut b.scores.summary {
+        summary.missing = 1;
+    }
+    let report = compare(&a, &b, false).unwrap();
+    assert!(report.warnings.contains(&CompareWarning::ScoresIncomplete {
+        side: 'B',
+        missing: 1,
+        incomplete: 0
+    }));
+}
+
+#[test]
+fn flips_are_ordered_by_the_size_of_the_change_with_ties_by_id() {
+    // 四次抽樣,案例分數是 1/4 的倍數:變化幅度各不相同,而且跟 id 的順序不同。
+    // (cargo-mutants:排序比較式裡的 `-` 換成 `/`、`+` 時,只有兩個案例的測試看不出來。)
+    let samples = |pattern: [bool; 4]| -> Vec<VerdictResult> {
+        pattern
+            .iter()
+            .map(|ok| if *ok { Pass } else { Fail })
+            .collect()
+    };
+    let build = |model: &str, rows: &[(&str, [bool; 4])]| {
+        type Row<'a> = (&'a str, u32, [(&'a str, VerdictResult); 1]);
+        let verdicts: Vec<Row<'_>> = rows
+            .iter()
+            .flat_map(|(id, pattern)| {
+                samples(*pattern)
+                    .into_iter()
+                    .zip(0..)
+                    .map(move |(v, n)| (*id, n, [("c", v)]))
+            })
+            .collect();
+        let rows: Vec<(&str, u32, Verdicts<'_>)> = verdicts
+            .iter()
+            .map(|(id, n, v)| (*id, *n, v.as_slice()))
+            .collect();
+        side(model, &format!("{model}-id"), &rows)
+    };
+    let (t, f) = (true, false);
+    let a = build(
+        "cheap",
+        &[
+            ("a", [t, t, t, t]), // 1.00 → 0.75
+            ("b", [t, t, t, t]), // 1.00 → 0.00
+            ("c", [t, t, t, t]), // 1.00 → 0.50
+            ("d", [t, t, f, f]), // 0.50 → 0.25(跟 a 一樣大,依 id)
+            ("e", [f, f, f, f]), // 0.00 → 0.25
+            ("g", [f, f, f, f]), // 0.00 → 1.00
+        ],
+    );
+    let b = build(
+        "default",
+        &[
+            ("a", [t, t, t, f]),
+            ("b", [f, f, f, f]),
+            ("c", [t, t, f, f]),
+            ("d", [t, f, f, f]),
+            ("e", [t, f, f, f]),
+            ("g", [t, t, t, t]),
+        ],
+    );
+
+    let report = compare(&a, &b, false).unwrap();
+
+    let ids = |list: &[Flip]| -> Vec<String> { list.iter().map(|x| x.case_id.clone()).collect() };
+    assert_eq!(ids(&report.regressed), ["b", "c", "a", "d"]);
+    assert_eq!(ids(&report.improved), ["g", "e"]);
+}
+
+#[test]
+fn a_clear_difference_says_which_side_is_better() {
+    // (cargo-mutants:`diff > 0.0` 換成 `==`、`<`、`>=` 時沒有測試失敗:報告裡從沒出現過有差異的情況。)
+    let interval = |low: f64, high: f64| Interval {
+        cases: 50,
+        diff: (low + high) / 2.0,
+        low,
+        high,
+        resamples: RESAMPLES,
+        seed: SEED,
+    };
+    assert_eq!(verdict(&interval(0.1, 0.3)), "B is better");
+    assert_eq!(verdict(&interval(-0.3, -0.1)), "B is worse");
+    assert_eq!(verdict(&interval(-0.1, 0.3)), "no detectable difference");
+    // 剛好碰到 0 也是「看不出差異」(同 `Interval::excludes_zero`)。
+    assert_eq!(verdict(&interval(0.0, 0.3)), "no detectable difference");
+    assert_eq!(verdict(&interval(-0.3, 0.0)), "no detectable difference");
+}
+
+#[test]
+fn the_call_error_rate_is_shown_as_a_fraction_and_a_percentage() {
+    // (cargo-mutants:錯誤數一直是 0 時,`/` 換成 `*`、`%` 都一樣是 0。)
+    let mut s = stats::stats(&[]);
+    assert_eq!(errors(&s), "0/0 (-)");
+    s.responses = 4;
+    s.call_errors = 1;
+    assert_eq!(errors(&s), "1/4 (25.0%)");
+}
