@@ -15,7 +15,7 @@ use super::*;
 use crate::store::DatasetInfo;
 
 /// 假的評審。看 prompt 決定怎麼回:回答裡有 `BAD` → 每條都不通過;有 `HANG` → 永遠不回;其他 → 每條都通過。
-/// 每次用掉 1000 個輸入、100 個輸出 token。
+/// 每次用掉 1000 個輸入、100 個輸出、300 個讀快取、50 個寫快取 token。
 struct FakeJudge {
     calls: AtomicUsize,
     served: &'static str,
@@ -82,7 +82,8 @@ impl LlmProvider for FakeJudge {
                 usage: Usage {
                     input_tokens: 1000,
                     output_tokens: 100,
-                    ..Usage::default()
+                    cache_read_tokens: 300,
+                    cache_write_tokens: 50,
                 },
                 meta: ProviderMetadata::default(),
             })
@@ -90,12 +91,13 @@ impl LlmProvider for FakeJudge {
     }
 }
 
-/// 評審每次:1000 × $2 + 100 × $10(每百萬 token)= $0.003。
+/// 評審每次:(1000 + 300 + 50) × $2 + 100 × $10(每百萬 token)= $0.0037。
+/// 快取的 token 也按輸入價計(`run::cost`:估高不估低)。
 const PRICE: Price = Price {
     input: 2.0,
     output: 10.0,
 };
-const PER_JUDGE_CALL: f64 = 0.003;
+const PER_JUDGE_CALL: f64 = 0.0037;
 
 /// 案例:題目 `q-<id>`、檢查「要有 x」;`rubric` 不是空的就加上評分標準。
 fn case_line(id: &str, rubric: &[&str]) -> String {
@@ -417,7 +419,17 @@ async fn the_judge_grades_the_rubric_after_the_checks() {
         (2, 1, 2, 0)
     );
     assert_eq!(summary.judge_models, ["judge-id"]);
-    assert_eq!(summary.judge_usage.input_tokens, 2000);
+    // 四種 token 都累加:快取有沒有生效要寫進報告(design §6)。
+    // (cargo-mutants:快取兩欄的 `+=` 換成 `-=`、`*=` 時沒有測試失敗,因為假評審原本回 0。)
+    assert_eq!(
+        summary.judge_usage,
+        Usage {
+            input_tokens: 2000,
+            output_tokens: 200,
+            cache_read_tokens: 600,
+            cache_write_tokens: 100,
+        }
+    );
     assert!(approx(summary.cost_usd.unwrap(), 2.0 * PER_JUDGE_CALL));
     let config = score_meta(&s.run, "j").unwrap().config;
     assert_eq!(
