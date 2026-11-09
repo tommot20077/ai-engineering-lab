@@ -8,8 +8,8 @@ name: Mutants (diff)
 on:
   push:
     branches: [main]
-    # 只改文件的 push 沒有 Rust 程式可以突變,不必開機器。
-    paths: ["**.rs", ".cargo/mutants.toml"]
+    # 只改文件的 push 沒有 Rust 程式可以突變,不必開機器。改到這個檔案本身也要跑,才知道它還能用。
+    paths: ["**.rs", ".cargo/mutants.toml", ".github/workflows/mutants-diff.yml"]
 
 permissions:
   contents: read
@@ -59,6 +59,11 @@ jobs:
         if: always()
         run: |
           out=target/mutants.out
+          # diff 沒有改到 Rust 程式行時,cargo-mutants 不會產生輸出目錄。
+          if [ ! -d "$out" ]; then
+            echo "## cargo-mutants:這次 push 沒有改到 Rust 程式行" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           count() { if [ -f "$out/$1.txt" ]; then wc -l < "$out/$1.txt"; else echo 0; fi; }
           missed=$(count missed)
           {
@@ -71,7 +76,8 @@ jobs:
             echo "### missed(逐一分成 A / B / C,見 .claude/skills/lab-step 第 3 節)"
             echo
             echo '```'
-            cat "$out/missed.txt" 2>/dev/null
+            # 這個 shell 開著 `-e`:全部抓到時沒有 missed.txt,`cat` 失敗會讓整步失敗,所以補 `|| true`。
+            cat "$out/missed.txt" 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           # `::warning::` 會讓 run 頁面上出現黃色提示,但 job 仍然是綠的(只回報、不擋)。
