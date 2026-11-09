@@ -15,7 +15,6 @@ use std::time::Duration;
 use config_loader::ConfigFile;
 use llm::{DEFAULT_BASE_URL, RetryPolicy};
 use serde::Deserialize;
-use url::{Host, Url};
 
 pub const DEFAULT_BIND: &str = "127.0.0.1:8787";
 pub const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
@@ -278,29 +277,10 @@ fn check_aliases(aliases: &BTreeMap<String, String>, problems: &mut Vec<String>)
 }
 
 fn check_base_url(raw: Option<&str>, problems: &mut Vec<String>) -> Option<String> {
-    let raw = raw.unwrap_or(DEFAULT_BASE_URL);
-    let Ok(url) = Url::parse(raw) else {
-        problems.push(format!("anthropic.base_url `{raw}` is not a valid URL"));
-        return None;
-    };
-    // API key 放在 header 裡送出:明文 http 只准連到本機(給測試用的假 server)。
-    // `Host` 是 enum:網域、IPv4、IPv6 分開表示,不必自己拆字串。
-    let local = match url.host() {
-        Some(Host::Domain(host)) => host == "localhost",
-        Some(Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    };
-    match url.scheme() {
-        "https" => Some(raw.to_owned()),
-        "http" if local => Some(raw.to_owned()),
-        _ => {
-            problems.push(format!(
-                "anthropic.base_url `{raw}` must use https (plain http is only allowed for localhost)"
-            ));
-            None
-        }
-    }
+    // 規則(只准 https,明文 http 只限本機)跟 eval 共用,寫在 config-loader。
+    config_loader::check_api_base_url("anthropic.base_url", raw.unwrap_or(DEFAULT_BASE_URL))
+        .map_err(|problem| problems.push(problem))
+        .ok()
 }
 
 fn check_retry(retry: &RetrySection, problems: &mut Vec<String>) -> RetryPolicy {

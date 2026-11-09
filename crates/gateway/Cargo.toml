@@ -16,8 +16,6 @@ config-loader = { path = "../config-loader" }
 serde.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
-# 解析與檢查 anthropic.base_url(scheme、host)。
-url.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

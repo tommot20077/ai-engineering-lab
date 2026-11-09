@@ -116,6 +116,31 @@ pub fn secret_env(name: &str) -> Result<SecretString> {
     secret_from(name, std::env::var_os(name))
 }
 
+/// 檢查設定裡的 API base URL:只准 https;明文 http 只准連到本機(給測試用的假 server)。
+///
+/// API key 會放在 header 裡送出,走明文到別的機器就等於公開它。gateway 與 eval 共用這條規則(安全檢查只寫一份)。
+/// `field` 是設定裡的欄位名稱,放進錯誤訊息,例如 `anthropic.base_url`。回傳 `Err(說明)`,
+/// 讓呼叫者跟其他問題一起列出來。
+pub fn check_api_base_url(field: &str, raw: &str) -> std::result::Result<String, String> {
+    let Ok(url) = url::Url::parse(raw) else {
+        return Err(format!("{field} `{raw}` is not a valid URL"));
+    };
+    // `Host` 是 enum:網域、IPv4、IPv6 分開表示,不必自己拆字串。`localhost.evil.com` 是另一個網域,不算本機。
+    let local = match url.host() {
+        Some(url::Host::Domain(host)) => host == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    match url.scheme() {
+        "https" => Ok(raw.to_owned()),
+        "http" if local => Ok(raw.to_owned()),
+        _ => Err(format!(
+            "{field} `{raw}` must use https (plain http is only allowed for localhost)"
+        )),
+    }
+}
+
 // ---- 內層:值從參數進來,方便測試 ----
 
 // `home` 是一個函式,而不是已經算好的值:只有路徑真的用到 `~` 才去找家目錄。
@@ -427,6 +452,37 @@ mod tests {
         assert!(
             matches!(&err, ConfigError::NotFound(p) if *p == path),
             "{err:?}"
+        );
+    }
+
+    #[test]
+    fn api_base_urls_must_use_https_except_for_localhost() {
+        for ok in [
+            "https://api.anthropic.com",
+            "https://proxy.example.com:8443/v1",
+            "http://127.0.0.1:9000",
+            "http://localhost:9000",
+            "http://[::1]:9000",
+        ] {
+            assert_eq!(check_api_base_url("x.base_url", ok).as_deref(), Ok(ok));
+        }
+        // 名字像 localhost 不算;遠端的明文 http 不行;其他 scheme 也不行。
+        for bad in [
+            "http://localhost.evil.com",
+            "http://api.example.com",
+            "http://10.0.0.1",
+            "ftp://localhost",
+        ] {
+            assert_eq!(
+                check_api_base_url("x.base_url", bad),
+                Err(format!(
+                    "x.base_url `{bad}` must use https (plain http is only allowed for localhost)"
+                ))
+            );
+        }
+        assert_eq!(
+            check_api_base_url("x.base_url", "not a url"),
+            Err("x.base_url `not a url` is not a valid URL".to_owned())
         );
     }
 }

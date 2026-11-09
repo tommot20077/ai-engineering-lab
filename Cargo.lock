@@ -366,6 +366,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "url",
 ]
 
 [[package]]
@@ -753,7 +754,6 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "url",
  "wiremock",
 ]
 

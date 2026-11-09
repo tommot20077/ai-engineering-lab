@@ -15,6 +15,8 @@ serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
+# 檢查 API 的 base_url(scheme、host)。reqwest 本來就依賴它,不會多編譯。
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
