@@ -296,7 +296,9 @@ output = 0.0
 ### CLI 的細節(第 8 步實作時定下)
 
 - **`main.rs` 是唯一讀設定檔、環境變數、`.env` 的地方**;設定的檢查(`config.rs`)與命令列的規則(`cli.rs`)都是純函式,有單元測試。
-  真的呼叫模型的全鏈路由第 10 步的 E2E 測(上游是 wiremock)。
+  真的呼叫模型的全鏈路由第 10 步的 E2E 測(上游是 wiremock)。在那之前,cargo-mutants 會把 `main.rs` 的 mutant
+  (印出結果、組裝 provider、讀 git commit、各指令的流程)列為 missed(B 類,第 8 步時 35 個);
+  main 裡值得單元測試的判斷(別名檢查、`--judge-all`)已搬進 library 測試。
 - **只有真的要呼叫模型時才讀 API key**:`--dry-run`、只做確定性檢查(`--no-judge`)、`compare` 都不需要。
   這些情況用一個「被呼叫就回傳錯誤」的 provider,保證不會偷偷送出請求。
 - **設定檔**:`[judge] alias` 必填;`[run] concurrency` 1~64(多打一個 0 不能一口氣送出幾百個呼叫);

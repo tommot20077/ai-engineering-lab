@@ -151,6 +151,13 @@ impl ScoreArgs {
     }
 }
 
+impl ScoreArgs {
+    /// 確定性檢查沒過時要不要跳過評審:設定檔說要跳過,而且這次沒有 `--judge-all`(D-034)。
+    pub fn skip_on_check_failure(&self, configured: bool) -> bool {
+        configured && !self.judge_all
+    }
+}
+
 /// `--budget` 的值:正的、有限的美元數。0 或負數沒有意義(什麼都不會做),NaN 會讓比較永遠不成立。
 pub fn positive_usd(raw: &str) -> Result<f64, String> {
     match raw.parse::<f64>() {

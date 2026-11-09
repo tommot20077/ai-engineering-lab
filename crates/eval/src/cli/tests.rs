@@ -234,3 +234,14 @@ fn the_config_option_works_before_or_after_the_subcommand() {
         std::path::Path::new("y.toml")
     );
 }
+
+#[test]
+fn judge_all_turns_off_skipping_for_one_scoring() {
+    // (cargo-mutants:這段原本在 main.rs,`&&` 換成 `||`、拿掉 `!` 都沒人發現。)
+    let plain = score(&["score", "/runs/x"]);
+    let all = score(&["score", "/runs/x", "--judge-all"]);
+    assert!(plain.skip_on_check_failure(true));
+    assert!(!plain.skip_on_check_failure(false));
+    assert!(!all.skip_on_check_failure(true));
+    assert!(!all.skip_on_check_failure(false));
+}

@@ -85,18 +85,6 @@ impl LlmProvider for Offline {
     }
 }
 
-/// 別名不在 `[aliases]` 裡:先擋下。否則每一次呼叫都會被 Alias 拒絕,整次執行全是錯誤,還留下一個執行目錄。
-fn known_alias(settings: &Settings, alias: &str) -> Result<()> {
-    if !settings.aliases.contains_key(alias) {
-        let known: Vec<&str> = settings.aliases.keys().map(String::as_str).collect();
-        bail!(
-            "unknown model alias `{alias}`; [aliases] in the config has: {}",
-            known.join(", ")
-        );
-    }
-    Ok(())
-}
-
 fn exec_options(
     settings: &Settings,
     concurrency: Option<usize>,
@@ -119,7 +107,7 @@ async fn run_command(settings: &Settings, args: &RunArgs) -> Result<()> {
     let (Some(dataset), Some(model)) = (&args.dataset, &args.model) else {
         bail!("--dataset and --model are required for a new run");
     };
-    known_alias(settings, model)?;
+    settings.require_alias(model)?;
     let path = settings.find_dataset(dataset)?;
     let config = RunConfig {
         model: model.clone(),
@@ -164,7 +152,7 @@ async fn resume_command(settings: &Settings, dir: &Path, args: &RunArgs) -> Resu
     // 設定從 meta.json 讀回來(design §5);價格依這次執行的模型找。
     let meta = RunDir::open(dir)?.read_meta()?;
     let model = &meta.config.model;
-    known_alias(settings, model)?;
+    settings.require_alias(model)?;
     let options = exec_options(
         settings,
         args.concurrency,
@@ -200,7 +188,7 @@ async fn resume_command(settings: &Settings, dir: &Path, args: &RunArgs) -> Resu
 async fn score_command(settings: &Settings, args: &ScoreArgs) -> Result<()> {
     let judge_alias = args.judge_alias(&settings.judge.alias);
     if let Some(alias) = judge_alias {
-        known_alias(settings, alias)?;
+        settings.require_alias(alias)?;
     }
     let name = args.score_name(&settings.judge.alias);
     let price = judge_alias.and_then(|alias| settings.price_of(alias));
@@ -214,7 +202,7 @@ async fn score_command(settings: &Settings, args: &ScoreArgs) -> Result<()> {
     let setup = ScoreSetup {
         name: &name,
         judge: judge.as_ref(),
-        skip_on_check_failure: settings.judge.skip_on_check_failure && !args.judge_all,
+        skip_on_check_failure: args.skip_on_check_failure(settings.judge.skip_on_check_failure),
     };
 
     if args.dry_run {

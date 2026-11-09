@@ -755,4 +755,15 @@ mod tests {
             ["a2", "b", "checks", "sonnet", "zeta"]
         );
     }
+
+    #[test]
+    fn listing_scores_reports_read_errors_other_than_a_missing_directory() {
+        // 只有「scores/ 不存在」才是「還沒打過分」;讀不了(這裡 scores 是一個檔案)要報錯,不能當成沒有打分。
+        // (cargo-mutants:NotFound 的判斷換成 `true` 時沒有測試失敗。)
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = RunDir::create(&tmp.path().join("runs"), &meta("cheap")).unwrap();
+        std::fs::write(dir.path().join("scores"), "").unwrap();
+
+        assert!(matches!(dir.score_names(), Err(StoreError::Io { .. })));
+    }
 }

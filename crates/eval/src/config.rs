@@ -126,6 +126,13 @@ pub struct JudgeSettings {
 pub struct InvalidConfig(pub Vec<String>);
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown model alias `{alias}`; [aliases] in the config has: {}", known.join(", "))]
+pub struct UnknownAlias {
+    pub alias: String,
+    pub known: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DatasetLookupError {
     #[error(
         "invalid dataset name {0:?}: use letters, digits, `.`, `_` or `-`, or give a path to a .jsonl file"
@@ -252,6 +259,18 @@ impl Settings {
                 })
             }
             _ => Err(InvalidConfig(problems)),
+        }
+    }
+
+    /// 別名不在 `[aliases]` 裡:先擋下。否則每一次呼叫都會被 Alias 拒絕,整次執行全是錯誤,還留下一個執行目錄。
+    pub fn require_alias(&self, alias: &str) -> Result<(), UnknownAlias> {
+        if self.aliases.contains_key(alias) {
+            Ok(())
+        } else {
+            Err(UnknownAlias {
+                alias: alias.to_owned(),
+                known: self.aliases.keys().cloned().collect(),
+            })
         }
     }
 

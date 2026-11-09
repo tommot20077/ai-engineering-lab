@@ -327,3 +327,18 @@ fn names_that_could_escape_the_directories_are_refused() {
         );
     }
 }
+
+#[test]
+fn only_aliases_from_the_config_are_accepted() {
+    // (cargo-mutants:這段原本在 main.rs,binary 沒有單元測試,換成 `Ok(())` 沒人發現。)
+    let s = settings(
+        "[aliases]\ncheap = \"claude-haiku-5-5\"\ndefault = \"claude-sonnet-5-5\"\n[judge]\nalias = \"cheap\"\n",
+    )
+    .unwrap();
+    assert_eq!(s.require_alias("cheap"), Ok(()));
+    let err = s.require_alias("claude-haiku-5-5").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "unknown model alias `claude-haiku-5-5`; [aliases] in the config has: cheap, default"
+    );
+}
