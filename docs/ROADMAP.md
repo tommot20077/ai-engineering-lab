@@ -89,7 +89,7 @@
 | D-033 | eval 直接用 `llm` library,套 Alias + Retry,不套 Record;不經過 gateway | eval 的題目不是真實使用,記進呼叫紀錄會污染階段 2 的訓練原料;不必先啟動 gateway | 2026-11-01 |
 | D-034 | eval 費用控制:事前估出最壞情況的費用、`--budget` 超過就不再送出新呼叫(沒有價格時拒絕執行);確定性檢查沒過就不叫評審;評審用低 effort、被評的回答放 prompt 最後吃 prompt cache。Batch API 與 Haiku 評審留待之後 | 費用大頭是評審(約是產生 Haiku 回答的 20 倍);eval 會反覆執行,超支要在送出前擋下 | 2026-11-01 |
 | D-035 | eval 借鏡 Harness²:並列全部通過率與部分得分;A/A 雜訊底線;打分設定不一致預設拒絕比較(`--allow-mismatch` 例外);`--resume` 接續;`--dry-run` / `--tags` / `--limit`;dev / test 切分(資料集約 60 題以上再做) | 比較要敏感也要誠實;`--budget` 會留下不完整的執行,接續才不白付錢;反覆調整會對資料集 overfit | 2026-11-01 |
-| D-036 | cargo-mutants 不在本機跑:每次 push 由 `.github/workflows/mutants-diff.yml` 用 `--in-diff` 只對改到的程式行跑(只回報、有漏掉時出 warning),結果在 lab-step 第 6 節等 CI 時看,漏掉的在下一個 commit 補;本機只留手寫的 `scripts/mutate.py`;每週全 workspace 排程不變。fmt、clippy、測試仍在本機跑 | 實測 SSD 寫入:對 gateway 跑一次 cargo-mutants 約 15 GB(106 秒),`scripts/check.sh` 約 0.1~0.6 GB;mutants 佔 Rust 寫入量九成以上。全部搬上 CI 會讓 TDD 每輪等好幾分鐘,而且 rust-analyzer 本來就在本機編譯。代價:mutation 的回饋從 commit 前變成 push 後 | 2026-11-09 |
+| D-036 | cargo-mutants 不在本機跑:每次 push 由 `.github/workflows/mutants-diff.yml` 用 `--in-diff` 只對改到的程式行跑(只回報、有漏掉時出 warning),結果在 lab-step 第 6 節等 CI 時看,漏掉的在下一個 commit 補;本機只留手寫的 `scripts/mutate.py`;每週全 workspace 排程不變。fmt、clippy、測試仍在本機跑。**所有分支都觸發**(CI 也是):分支用 `merge-base origin/main` 累積比較、連續 push 時取消舊的 run;main 用 push 之前的 commit 比較、不取消 | 實測 SSD 寫入:對 gateway 跑一次 cargo-mutants 約 15 GB(106 秒),`scripts/check.sh` 約 0.1~0.6 GB;mutants 佔 Rust 寫入量九成以上。全部搬上 CI 會讓 TDD 每輪等好幾分鐘,而且 rust-analyzer 本來就在本機編譯。代價:mutation 的回饋從 commit 前變成 push 後。所有分支都觸發,是因為 session 預設開 worktree、在分支上工作,只認 main 時分支上完全沒有 CI;分支累積比較,取消舊的 run 也不會漏 | 2026-11-09 |
 | D-037 | 支援在 Claude Code 雲端開發:repo 的 `.claude/settings.json` 加 SessionStart hook(自動跑 `install-hooks.sh`)與 PreToolUse hook(`scripts/guard-env.sh` 擋下印出環境變數的指令);私有資料掃描在沒有 `.private-patterns` 時改讀環境變數 `PRIVATE_PATTERNS`,雲端兩者都沒有時拒絕 commit,規則不是合法的 regex 時也拒絕;兩道護欄由 `scripts/test-guards.sh` 測試,check.sh 與 CI 都跑。`ANTHROPIC_API_KEY` 在雲端只能放成環境變數(官方文件:network secret 不會附加到 api.anthropic.com),要用專用、有花費上限的 key | 雲端是重新 clone,gitignore 的檔案都不在:不處理的話,掃描只擋 API key、私有名稱會直接進公開 repo(寫入路徑要 fail-loud);環境變數在 session 裡讀得到,要有機制擋住意外印出 | 2026-11-09 |
 
 ## 模組
@@ -143,6 +143,9 @@
 9. lifetime、generics
 
 ## 待辦 / 等使用者
+
+- **分支合併進 main**:在分支上做的工作用 fast-forward 合併進 main,ROADMAP 以 main 上的版本為準。
+  合併後 Mutants (diff) 會在 main 對同樣的改動再跑一次,這是預期中的(D-036)。
 
 - **004 的範圍**:到 004 時再設計。做法以公開的技術為基礎從頭設計,目標是比使用者既有的實作更完整。
 - **Jev**:TypeSafe 的決策模型(非生成式,從固定選項挑一個並給機率)。目前資料多為第三方文章,

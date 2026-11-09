@@ -128,6 +128,9 @@ cat target/mutants-ci/missed.txt
 
 - `missed.txt` 非空時,依第 3 節分成 A / B / C,寫進導讀;A 類在下一個 commit 補測試,C 類加進 `exclude_re`。
   `gh run list` 剛 push 完可能還查不到 run,等幾秒再查。
+- **在分支上 push 也會觸發兩個 workflow**(D-036),上面等 CI 的指令照舊。分支上的 Mutants (diff) 比較的是
+  `merge-base origin/main` 到 HEAD(整個分支累積的改動),所以 `missed.txt` 可能包含前幾步已經看過的;
+  連續 push 時舊的 run 會被取消,只看最新那一次。分支做完用 fast-forward 合併進 main。
 
 - pre-commit / commit-msg hook 會自動做私有資料掃描(`scripts/private-scan.sh`);被擋下就移除內容,
   不要用 `--no-verify` 繞過。新 clone 要先跑一次 `scripts/install-hooks.sh`。

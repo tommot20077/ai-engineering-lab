@@ -1,15 +1,23 @@
 name: Mutants (diff)
 
-# 每次 push 到 main,只對「這次改到的程式行」跑 cargo-mutants(D-036)。
+# 每次 push(所有分支),只對改到的程式行跑 cargo-mutants(D-036)。
 # 以前每一步在本機對整個 crate 跑一次,一次就寫進 SSD 約 15 GB(gateway,實測);
 # 移到這裡之後,本機只剩手寫的 scripts/mutate.py。
 # 跟每週排程(mutants.yml)一樣只回報、不擋:漏掉的 mutant 要人來分成 A / B / C(lab-step 第 3 節)。
 # 有漏掉時會出一個 warning,摘要在該次 run 的 Summary 頁,完整結果在 artifact `mutants-diff-out`。
+#
+# 所有分支都跑:session 預設開 worktree、在分支上工作,只認 main 的話,分支上的每一步都拿不到 mutation 回饋。
+# 分支合併進 main 之後,同樣的改動會在 main 再跑一次,這是預期中的。
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     # 只改文件的 push 沒有 Rust 程式可以突變,不必開機器。改到這個檔案本身也要跑,才知道它還能用。
     paths: ["**.rs", ".cargo/mutants.toml", ".github/workflows/mutants-diff.yml"]
+
+# 同 ci.yml:分支上取消舊的 run(分支的 diff 是累積的,見下面的 diff 步驟,取消不會漏掉);main 每次都跑完。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -32,14 +40,28 @@ jobs:
         with:
           tool: cargo-mutants@27.1.0
       - name: diff
-        # `before` 是這次 push 之前 main 指到的 commit。第一次 push 或 force push 時它可能不存在,
-        # 那就退回只看最後一個 commit。
+        # 基準點分兩種:
+        # - main:`before` 是這次 push 之前 main 指到的 commit,只看這次 push 帶來的改動。
+        #   它不存在時(第一次 push、force push)退回 HEAD~1。main 不取消 run,所以每次 push 都會被檢查到。
+        # - 其他分支:永遠用 `git merge-base origin/main HEAD`,也就是整個分支累積的改動。
+        #   用 `before` 會有兩個洞:新分支第一次 push 時它是一串 0(退回 HEAD~1 只看最後一個 commit);
+        #   舊的 run 被 concurrency 取消時,那次 push 的改動就沒人檢查。累積比較兩個洞都補上。
+        #   checkout 是 fetch-depth: 0,origin/main 拿得到。
         env:
           BEFORE: ${{ github.event.before }}
+          REF: ${{ github.ref }}
         run: |
           mkdir -p target
-          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"; else base="HEAD~1"; fi
-          echo "diff base: $base"
+          if [ "$REF" = "refs/heads/main" ]; then
+            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              kind="main: commit before this push"; base="$BEFORE"
+            else
+              kind="main: before is unavailable, fall back to HEAD~1"; base="$(git rev-parse HEAD~1)"
+            fi
+          else
+            kind="branch: merge-base with origin/main"; base="$(git merge-base origin/main HEAD)"
+          fi
+          echo "diff base: $kind ($base)"
           git diff "$base" HEAD -- '*.rs' > target/push.diff
           wc -l target/push.diff
       - name: cargo mutants

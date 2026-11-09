@@ -1,9 +1,16 @@
 name: CI
 
+# 所有分支的 push 都跑(D-036):session 預設開 worktree、在分支上工作,只認 main 的話,分支上的每一步都沒有 CI。
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
+
+# 同一個 workflow + 同一個 ref 只留最新的一次:分支連續 push 時,舊的 run 已經過時,取消掉。
+# main 每一次都要跑完(`cancel-in-progress` 只在不是 main 時為 true),每個推上 main 的 commit 都有結果。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # 只給讀取權限:CI 不需要寫入 repo,權限給最小(安全原則)。
 permissions:
