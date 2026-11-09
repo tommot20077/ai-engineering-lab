@@ -205,7 +205,7 @@ impl RunDir {
     pub fn appender(&self) -> Result<Appender, StoreError> {
         let path = self.path.join(RESPONSES);
         let mut file = private_file(&path, true)?;
-        seal_partial_line(&mut file).at(&path)?;
+        drop_partial_line(&mut file).at(&path)?;
         Ok(Appender { file, path })
     }
 }
@@ -264,18 +264,21 @@ fn check_private(dir: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// 上次當機可能留下寫了一半的行。最後一個字元不是換行就先補一個,下一筆才不會黏在半行後面。
-fn seal_partial_line(file: &mut File) -> io::Result<()> {
-    let len = file.metadata()?.len();
-    if len == 0 {
-        return Ok(());
-    }
-    // 以 append 模式打開的檔案也能讀:移到最後一個 byte 看看它是不是換行。寫入一律加在最後,不受 seek 影響。
-    file.seek(SeekFrom::Start(len - 1))?;
-    let mut last = [0u8; 1];
-    file.read_exact(&mut last)?;
-    if last != *b"\n" {
-        file.write_all(b"\n")?;
+/// 上次當機可能留下寫了一半的行:截掉它,下一筆才不會黏在半行後面。
+///
+/// 不是補一個換行把它「封住」:那樣半行會變成檔案中間的一行,之後每次讀都被當成「檔案被改壞了」而報錯。
+/// 截掉不會遺失資料:讀的時候那半行本來就算「沒做過」。完整的行一個 byte 都不動(檔案仍然只往後加)。
+fn drop_partial_line(file: &mut File) -> io::Result<()> {
+    // 以 append 模式打開的檔案也能讀;寫入一律加在最後,不受 seek 影響。
+    // 整個檔案讀進來找最後一個換行:結果檔最多幾 MB,讀取端本來也是整份讀。
+    let mut bytes = Vec::new();
+    file.seek(SeekFrom::Start(0))?;
+    file.read_to_end(&mut bytes)?;
+    // `rposition`:從後面找第一個符合的位置。沒有換行(整個檔案就是半行)就截到 0。
+    let keep = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+    if keep < bytes.len() {
+        // `set_len`:截短檔案。Java 對照:`FileChannel.truncate(size)`。
+        file.set_len(keep as u64)?;
     }
     Ok(())
 }
@@ -448,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn a_half_written_last_line_counts_as_not_done_and_is_sealed_off() {
+    fn a_half_written_last_line_counts_as_not_done_and_is_dropped() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = RunDir::create(&tmp.path().join("runs"), &meta("cheap")).unwrap();
         dir.appender().unwrap().append(&ok_line("a", 0)).unwrap();
@@ -466,7 +469,7 @@ mod tests {
             .collect();
         assert_eq!(keys, ["a"]);
 
-        // 寫的時候先補換行,新的一行不會黏在半行後面。
+        // 接續寫入時先截掉那半行,新的一行不會黏在半行後面。
         dir.appender().unwrap().append(&ok_line("c", 0)).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let last = text.lines().last().unwrap();
@@ -474,6 +477,16 @@ mod tests {
             serde_json::from_str::<ResponseLine>(last).unwrap(),
             ok_line("c", 0)
         );
+
+        // 接續之後還要讀得回來:那半行被丟掉,不會變成「中間壞掉的行」。
+        let keys: Vec<String> = dir
+            .read_responses()
+            .unwrap()
+            .into_iter()
+            .map(|l| l.case_id)
+            .collect();
+        assert_eq!(keys, ["a", "c"]);
+        assert_eq!(text.lines().count(), 2, "{text}");
     }
 
     #[test]
