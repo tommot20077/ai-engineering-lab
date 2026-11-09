@@ -303,6 +303,13 @@ fn cases_are_appended_to_a_private_dataset() {
     let ids: Vec<&str> = ds.cases.iter().map(|c| c.id.as_str()).collect();
     assert_eq!(ids, ["a", "b"]);
     assert!(ds.cases[0] == case_with_id("a"));
+    // 一個案例剛好一行,沒有多出來的空行(讀資料集時會略過空行,所以要直接看檔案)。
+    // (cargo-mutants:「最後一行沒有換行」的判斷換成永遠 true 時,每次都多寫一個換行,沒有測試失敗。)
+    let expected = [case_with_id("a"), case_with_id("b")]
+        .iter()
+        .map(|c| serde_json::to_string(c).unwrap() + "\n")
+        .collect::<String>();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
     assert_eq!(mode(&dir), 0o700);
     assert_eq!(mode(&path), 0o600);
 }
