@@ -7,6 +7,7 @@ mod case;
 mod dataset;
 pub mod run;
 pub mod score;
+pub mod stats;
 pub mod store;
 
 pub use case::{Case, ChatInput, Check, Input, Output};
