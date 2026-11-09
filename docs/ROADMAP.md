@@ -41,10 +41,11 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 5 步:`score` 打分流程(檢查沒過就不叫評審、自我偏好警告、`scores/<name>.jsonl` 與 meta,design §12)。
+- **下一步**:002 第 6 步:統計(全部通過率、部分得分、paired bootstrap、固定種子,design §12)。
+  要先決定:部分得分遇到「檢查沒過、沒叫評審」(`judge: skipped`)的回應時,評分標準算 0 分還是不列入。
   第 1 步(資料集)、第 2 步(`Scorer` + 確定性檢查)、第 3 步(執行器:`run::start` / `resume`、執行目錄、預算、篩選)、
-  第 4 步(LLM 評審 `score::Judge`)完成;
-  `--dry-run` 的估價在 library(`run::estimate`),指令本身在第 8 步的 CLI。
+  第 4 步(LLM 評審 `score::Judge`)、第 5 步(打分流程 `score::score` / `estimate`、`scores/<name>.jsonl`,規則見 design §6)完成;
+  `--dry-run` 的估價在 library(`run::estimate`、`score::estimate`),指令本身在第 8 步的 CLI。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。

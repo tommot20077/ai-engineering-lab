@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use super::{Scored, Scorer, Verdict, VerdictResult};
 use crate::case::{Case, ChatInput, Input, Output};
+use crate::run::{Price, worst_case_request};
 
 const NAME: &str = "judge";
 
@@ -58,6 +59,22 @@ impl Judge {
             effort: effort.to_owned(),
             nonce: Box::new(random_nonce),
         }
+    }
+
+    /// 評審用的模型(送給 provider 的名字,通常是別名)。
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn effort(&self) -> &str {
+        &self.effort
+    }
+
+    /// 評一次最多花多少(規則同 `run::estimate`:輸入用 bytes ÷ 2 高估,輸出假設 `max_tokens` 全部用完)。
+    pub(crate) fn worst_case_usd(&self, case: &Case, output: &Output, price: Price) -> f64 {
+        let placeholder = "0".repeat(16); // 跟真正的 nonce 一樣長
+        let request = self.request(case, &output.text(), &placeholder);
+        worst_case_request(&request, price)
     }
 
     /// 組出送給評審的請求。順序固定為「指示 → 題目 → 參考答案 → 標準 → 被評的回答」:
@@ -122,33 +139,37 @@ impl Scorer for Judge {
             let nonce = (0..NONCE_ATTEMPTS)
                 .map(|_| (self.nonce)())
                 .find(|candidate| !candidate.is_empty() && !answer.contains(candidate.as_str()));
-            let (parsed, usage) = match nonce {
+            let (parsed, usage, model) = match nonce {
                 None => (
                     Err("could not pick a marker that does not appear in the answer".to_owned()),
                     llm::Usage::default(),
+                    None,
                 ),
                 Some(nonce) => {
                     let request = self.request(case, &answer, &nonce);
                     match self.provider.complete(request).await {
-                        Ok(response) => (parse_reply(&response, &case.rubric), response.usage),
+                        Ok(response) => (
+                            parse_reply(&response, &case.rubric),
+                            response.usage,
+                            Some(response.model),
+                        ),
                         Err(error) => (
                             Err(format!(
                                 "judge call failed: {}",
                                 RecordedError::from(&error).message
                             )),
                             llm::Usage::default(),
+                            None,
                         ),
                     }
                 }
             };
-            let verdicts = parsed.unwrap_or_else(|reason| {
-                // 評審的結果不能用:每一條都是 `Error`(不算通過、也不算不通過,design §6)。
-                case.rubric
-                    .iter()
-                    .map(|criterion| verdict(criterion, VerdictResult::Error, reason.clone()))
-                    .collect()
-            });
-            Scored { verdicts, usage }
+            let verdicts = parsed.unwrap_or_else(|reason| error_verdicts(&case.rubric, &reason));
+            Scored {
+                verdicts,
+                usage,
+                model,
+            }
         })
     }
 }
@@ -214,6 +235,15 @@ fn parse_reply(response: &Response, rubric: &[String]) -> Result<Vec<Verdict>, S
             verdict(criterion, result, reason)
         })
         .collect())
+}
+
+/// 評審的結果不能用時:每一條都是 `Error`(不算通過、也不算不通過,design §6)。
+/// 打分流程在評審逾時的時候也用它(`score::score`)。
+pub(crate) fn error_verdicts(rubric: &[String], reason: &str) -> Vec<Verdict> {
+    rubric
+        .iter()
+        .map(|criterion| verdict(criterion, VerdictResult::Error, reason.to_owned()))
+        .collect()
 }
 
 fn verdict(criterion: &str, result: VerdictResult, reason: String) -> Verdict {
@@ -530,6 +560,8 @@ move 會轉移所有權
             (scored.usage.input_tokens, scored.usage.output_tokens),
             (700, 90)
         );
+        // 實際回答的模型(別名換過之後的),用來偵測自己評自己。
+        assert_eq!(scored.model.as_deref(), Some("judge-model"));
     }
 
     /// 評審的回覆不對勁時:每一條都是 `Error`,理由一樣,不猜。
@@ -622,6 +654,11 @@ move 會轉移所有權
         assert_eq!(results, [VerdictResult::Error, VerdictResult::Error]);
         assert_eq!(reason, "judge call failed: provider returned HTTP 529");
         assert_eq!(usage, Usage::default());
+        let scored = block_on(
+            judge(FakeJudge::new(|| Err(LlmError::http(529, None, ""))))
+                .score(&case(&RUBRIC, None), &answer("a")),
+        );
+        assert_eq!(scored.model, None);
     }
 
     #[test]
@@ -757,5 +794,25 @@ move 會轉移所有權
             question,
             "## Question\n[user] 讀 lib.rs\n[tool call read_file] {\"path\":\"src/lib.rs\"}\n[tool result] pub fn add() {}"
         );
+    }
+
+    #[test]
+    fn the_worst_case_counts_the_whole_prompt_and_all_of_max_tokens() {
+        let j = judge(FakeJudge::new(good));
+        let c = case(&RUBRIC, Some("參考答案"));
+        let a = answer("move 會轉移所有權");
+        let price = Price {
+            input: 2.0,
+            output: 10.0,
+        };
+        // 跟真的送出去的請求一樣長(nonce 也是 16 個字元)。
+        let request = j.request(&c, &a.text(), &"N".repeat(16));
+        let bytes = serde_json::to_vec(&request).unwrap().len() as f64;
+        let expected = (bytes / 2.0 * 2.0 + f64::from(MAX_TOKENS) * 10.0) / 1_000_000.0;
+
+        let got = j.worst_case_usd(&c, &a, price);
+
+        assert!((got - expected).abs() < 1e-12, "{got} vs {expected}");
+        assert_eq!((j.model(), j.effort()), ("default", "low"));
     }
 }

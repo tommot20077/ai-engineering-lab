@@ -142,6 +142,14 @@ impl fmt::Display for Check {
 }
 
 impl Case {
+    /// 輸入的 SHA-256。每筆回應都記下它:打分時資料集可以改評分標準,但題目本身不能變(design §6)。
+    pub fn input_sha256(&self) -> String {
+        // serde_json 依欄位宣告的順序輸出,`ProviderMetadata` 是 `BTreeMap`(key 有排序):同樣的輸入一定得到同樣的 bytes。
+        // 用 `HashMap` 的話順序每次執行都可能不同,hash 就不能存起來比較了。
+        let bytes = serde_json::to_vec(&self.input).unwrap_or_default();
+        crate::dataset::sha256_hex(&bytes)
+    }
+
     /// 檢查一個案例本身合不合理,回傳全部的問題(空的 = 沒問題)。
     pub fn problems(&self) -> Vec<String> {
         let mut problems = Vec::new();

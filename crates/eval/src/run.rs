@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use jiff::Timestamp;
-use llm::{LlmError, LlmProvider, RecordedError, Usage};
+use llm::{LlmError, LlmProvider, RecordedError, Request, Usage};
 use serde::{Deserialize, Serialize};
 
 use crate::case::{Case, Input, Output};
@@ -41,6 +41,7 @@ pub struct RunConfig {
 }
 
 /// 這次呼叫要用的限制。每次呼叫 `start` / `resume` 都可以不同(例如接續時把預算調高),所以不寫進 meta。
+/// 打分(`score::score`)也用它:那邊付錢的是評審,所以 `price` 是評審模型的價格。
 #[derive(Debug, Clone, Copy)]
 pub struct ExecOptions {
     /// 同時進行的呼叫上限。
@@ -49,7 +50,7 @@ pub struct ExecOptions {
     pub timeout: Duration,
     /// 這次執行(含之前做過的)累計花費超過就不再送出新的呼叫(D-034)。
     pub budget_usd: Option<f64>,
-    /// 被測模型的價格。沒有就算不出費用。
+    /// 要付錢的那個模型的價格(執行:被測模型;打分:評審)。沒有就算不出費用。
     pub price: Option<Price>,
 }
 
@@ -191,13 +192,16 @@ pub fn estimate(dataset: &Dataset, items: &[WorkItem], price: Option<Price>) -> 
 /// 所以這是高估),輸出假設 `max_tokens` 全部用完(thinking 也算在 `max_tokens` 裡)。
 fn worst_case(case: &Case, price: Price) -> f64 {
     match &case.input {
-        Input::Chat(chat) => {
-            let bytes = serde_json::to_vec(&chat.to_request("model")).map_or(0, |body| body.len());
-            let input = bytes as f64 / 2.0;
-            let output = f64::from(chat.max_tokens);
-            (input * price.input + output * price.output) / 1_000_000.0
-        }
+        Input::Chat(chat) => worst_case_request(&chat.to_request("model"), price),
     }
+}
+
+/// 一個請求最多花多少(規則見 `worst_case`)。評審的估價也用它(`score::estimate`)。
+pub(crate) fn worst_case_request(request: &Request, price: Price) -> f64 {
+    let bytes = serde_json::to_vec(request).map_or(0, |body| body.len());
+    let input = bytes as f64 / 2.0;
+    let output = f64::from(request.max_tokens);
+    (input * price.input + output * price.output) / 1_000_000.0
 }
 
 /// 從全部的結果算出摘要。同一個 (案例, 抽樣) 以最後一行為準。
@@ -376,6 +380,7 @@ async fn call(
     Some(ResponseLine {
         case_id: case.id.clone(),
         sample: item.sample,
+        input_sha256: case.input_sha256(),
         result,
         latency_ms,
         cost_usd,
@@ -385,18 +390,18 @@ async fn call(
 /// 累計花費。存成「百萬分之一美元」的整數,才能用 `AtomicU64`(沒有 atomic 的 f64)。
 // 為什麼要 atomic:這些 future 雖然在同一個任務裡輪流執行,但整個任務可能被 tokio 搬到別的執行緒,
 // 借用的東西必須是 `Sync`。`Cell<u64>` 不是 `Sync`,編譯不會過;`AtomicU64` 是。
-struct Spent(AtomicU64);
+pub(crate) struct Spent(AtomicU64);
 
 impl Spent {
-    fn new(usd: f64) -> Self {
+    pub(crate) fn new(usd: f64) -> Self {
         Self(AtomicU64::new(to_micros(usd)))
     }
 
-    fn add(&self, usd: f64) {
+    pub(crate) fn add(&self, usd: f64) {
         self.0.fetch_add(to_micros(usd), Ordering::Relaxed);
     }
 
-    fn usd(&self) -> f64 {
+    pub(crate) fn usd(&self) -> f64 {
         self.0.load(Ordering::Relaxed) as f64 / 1_000_000.0
     }
 }
@@ -408,7 +413,7 @@ fn to_micros(usd: f64) -> u64 {
 }
 
 /// 一次呼叫的費用(美元)。cache 讀寫的 token 也按輸入價計(實際比較便宜):估高不估低,預算才守得住。
-fn cost(usage: &Usage, price: Price) -> f64 {
+pub(crate) fn cost(usage: &Usage, price: Price) -> f64 {
     let input = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
     (input as f64 * price.input + usage.output_tokens as f64 * price.output) / 1_000_000.0
 }
@@ -632,6 +637,13 @@ mod tests {
         };
         // 送出去的模型是設定裡的名字;Alias 換成真的 id 之後,記在回應裡。
         assert_eq!(output.text(), "answer to q1");
+        // 每一筆都記下自己那題輸入的 hash(打分時確認題目沒變)。
+        let ds = Dataset::load(&path).unwrap();
+        for l in &lines {
+            let case = ds.cases.iter().find(|c| c.id == l.case_id).unwrap();
+            assert_eq!(l.input_sha256, case.input_sha256(), "{}", l.case_id);
+        }
+        assert_ne!(lines[0].input_sha256, ds.cases[1].input_sha256());
 
         let meta = dir.read_meta().unwrap();
         assert_eq!(meta.config, config(2));
@@ -896,6 +908,7 @@ mod tests {
         let answered = |id: &str, cost: Option<f64>| ResponseLine {
             case_id: id.into(),
             sample: 0,
+            input_sha256: String::new(),
             result: CallResult::Error {
                 error: RecordedError {
                     kind: "http".into(),

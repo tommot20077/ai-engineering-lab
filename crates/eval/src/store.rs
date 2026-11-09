@@ -5,7 +5,9 @@
 //!   20261101T120000Z_rust-basics_cheap/       700  一次執行
 //!     meta.json                               600  設定與摘要
 //!     responses.jsonl                         600  一行一次呼叫,只往後加
-//!     scores/                                      打分的結果(第 5 步)
+//!     scores/                                 700  打分的結果,同一次執行可以有好幾份(換評審、改評分)
+//!       sonnet-judge.jsonl                    600  一行一次回應的打分,只往後加
+//!       sonnet-judge.meta.json                600  打分的設定與摘要
 //! ```
 //!
 //! 結果裡是模型的回答,私有資料集的話就是真實對話的延伸:跟 001 的呼叫紀錄一樣,只有自己讀得到。
@@ -17,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use llm::RecordedError;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::case::Output;
@@ -24,6 +27,10 @@ use crate::run::{RunConfig, Summary};
 
 const META: &str = "meta.json";
 const RESPONSES: &str = "responses.jsonl";
+const SCORES: &str = "scores";
+
+/// 打分名稱的長度上限。名稱會變成檔名。
+const MAX_SCORE_NAME: usize = 64;
 
 /// `meta.json`:這次執行「是什麼」。接續(`--resume`)時,設定全部從這裡讀回來。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -56,6 +63,8 @@ pub struct ResponseLine {
     pub case_id: String,
     /// 第幾次抽樣(從 0 開始)。
     pub sample: u32,
+    /// 這題輸入的 SHA-256(`Case::input_sha256`)。打分時用來確認題目沒被改過(design §6)。
+    pub input_sha256: String,
     // `flatten`:把 `CallResult` 的欄位攤平在同一層,JSON 裡是 `"outcome": "ok", "output": {...}`,不多包一層。
     #[serde(flatten)]
     pub result: CallResult,
@@ -95,6 +104,11 @@ pub enum StoreError {
         line: usize,
         message: String,
     },
+
+    #[error(
+        "invalid score name {0:?}: use 1 to 64 letters, digits, `.`, `_` or `-`, starting with a letter or digit"
+    )]
+    InvalidScoreName(String),
 }
 
 /// 讓 `?` 能順手加上路徑:`fs::read(&p).at(&p)?`。
@@ -150,74 +164,161 @@ impl RunDir {
     }
 
     pub fn read_meta(&self) -> Result<RunMeta, StoreError> {
-        let path = self.path.join(META);
-        let text = std::fs::read_to_string(&path).at(&path)?;
-        serde_json::from_str(&text).map_err(|e| StoreError::Corrupt {
-            path,
-            line: e.line(),
-            message: e.to_string(),
-        })
+        read_json(&self.path.join(META))
     }
 
-    /// 寫入 `meta.json`。先寫到暫存檔再改名:改名是原子操作,中途當掉也不會留下寫了一半的 meta。
+    /// 寫入 `meta.json`(原子地取代,見 `write_json`)。
     pub fn write_meta(&self, meta: &RunMeta) -> Result<(), StoreError> {
-        let path = self.path.join(META);
-        let tmp = self.path.join("meta.json.tmp");
-        let mut text = serde_json::to_vec_pretty(meta)
-            .map_err(io::Error::other)
-            .at(&tmp)?;
-        text.push(b'\n');
-        let mut file = private_file(&tmp, false)?;
-        file.write_all(&text).at(&tmp)?;
-        // Java 對照:`Files.move(tmp, path, ATOMIC_MOVE)`。
-        std::fs::rename(&tmp, &path).at(&path)
+        write_json(&self.path.join(META), meta)
     }
 
     /// 讀出全部的結果。最後一行如果沒有換行(上次寫到一半就當掉),那一行不算,當成沒做過。
     pub fn read_responses(&self) -> Result<Vec<ResponseLine>, StoreError> {
-        let path = self.path.join(RESPONSES);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            // 還沒有任何結果(例如剛建立就中斷)不是錯誤。
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
-            Err(e) => return Err(StoreError::Io { path, source: e }),
-        };
-        // `split_inclusive('\n')`:每一段都保留結尾的換行,最後一段沒有換行就是寫到一半的那行。
-        let mut lines = Vec::new();
-        for (index, piece) in text.split_inclusive('\n').enumerate() {
-            let Some(line) = piece.strip_suffix('\n') else {
-                break; // 沒有換行:上次寫到一半就當掉,當成沒做過。
-            };
-            if line.trim().is_empty() {
-                continue;
-            }
-            let parsed = serde_json::from_str(line).map_err(|e| StoreError::Corrupt {
-                path: path.clone(),
-                line: index + 1,
-                message: e.to_string(),
-            })?;
-            lines.push(parsed);
-        }
-        Ok(lines)
+        read_jsonl(&self.path.join(RESPONSES))
     }
 
     /// 打開 `responses.jsonl` 準備往後加。
     pub fn appender(&self) -> Result<Appender, StoreError> {
-        let path = self.path.join(RESPONSES);
-        let mut file = private_file(&path, true)?;
-        drop_partial_line(&mut file).at(&path)?;
-        Ok(Appender { file, path })
+        Appender::open(&self.path.join(RESPONSES))
+    }
+
+    /// 名為 `name` 的那份打分(`scores/<name>.jsonl` 與 `<name>.meta.json`)。
+    /// 名稱不合法就拒絕,不替使用者改名:之後 `compare --scores <name>` 要用同一個名字找回來。
+    pub fn scores(&self, name: &str) -> Result<ScoreFiles, StoreError> {
+        if !valid_score_name(name) {
+            return Err(StoreError::InvalidScoreName(name.to_owned()));
+        }
+        let dir = self.path.join(SCORES);
+        Ok(ScoreFiles {
+            lines: dir.join(format!("{name}.jsonl")),
+            meta: dir.join(format!("{name}.meta.json")),
+            dir,
+        })
     }
 }
 
-/// 往 `responses.jsonl` 後面加一行。
+/// 一份打分的兩個檔案。行與 meta 的型別由 `score` 模組決定,這裡只管檔案怎麼讀寫(泛型)。
+#[derive(Debug)]
+pub struct ScoreFiles {
+    dir: PathBuf,
+    lines: PathBuf,
+    meta: PathBuf,
+}
+
+impl ScoreFiles {
+    /// 還沒有打過分時是 `None`。
+    // `T: DeserializeOwned`:任何能從 JSON 讀出來的型別。呼叫的地方決定 `T` 是什麼(`read_meta::<ScoreMeta>()`)。
+    // Java 對照:`<T> Optional<T> readMeta(Class<T> type)`,但 Rust 不需要傳 `Class` 進來,型別在編譯時就知道。
+    pub fn read_meta<T: DeserializeOwned>(&self) -> Result<Option<T>, StoreError> {
+        if !self.meta.exists() {
+            return Ok(None);
+        }
+        read_json(&self.meta).map(Some)
+    }
+
+    /// 寫入 meta;`scores/` 不存在就建立(700)。
+    pub fn write_meta<T: Serialize>(&self, meta: &T) -> Result<(), StoreError> {
+        ensure_private_dir(&self.dir)?;
+        write_json(&self.meta, meta)
+    }
+
+    pub fn read_lines<T: DeserializeOwned>(&self) -> Result<Vec<T>, StoreError> {
+        read_jsonl(&self.lines)
+    }
+
+    pub fn appender(&self) -> Result<Appender, StoreError> {
+        ensure_private_dir(&self.dir)?;
+        Appender::open(&self.lines)
+    }
+}
+
+/// 打分名稱:英數字開頭,只用英數字與 `.`、`_`、`-`。不能是 `..`、不能有 `/`,檔案才不會寫到 `scores/` 外面。
+fn valid_score_name(name: &str) -> bool {
+    name.len() <= MAX_SCORE_NAME
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, StoreError> {
+    let text = std::fs::read_to_string(path).at(path)?;
+    serde_json::from_str(&text).map_err(|e| StoreError::Corrupt {
+        path: path.to_path_buf(),
+        line: e.line(),
+        message: e.to_string(),
+    })
+}
+
+/// 先寫到暫存檔再改名:改名是原子操作,中途當掉也不會留下寫了一半的 JSON。
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), StoreError> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let mut text = serde_json::to_vec_pretty(value)
+        .map_err(io::Error::other)
+        .at(&tmp)?;
+    text.push(b'\n');
+    let mut file = private_file(&tmp, false)?;
+    file.write_all(&text).at(&tmp)?;
+    // Java 對照:`Files.move(tmp, path, ATOMIC_MOVE)`。
+    std::fs::rename(&tmp, path).at(path)
+}
+
+/// 讀一個只往後加的 JSONL 檔。檔案不存在 = 還沒有任何一行;最後一行沒有換行 = 寫到一半就當掉,不算;
+/// 中間的行讀不懂 = 檔案被改壞了,報錯(不猜)。
+fn read_jsonl<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>, StoreError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        // 還沒有任何結果(例如剛建立就中斷)不是錯誤。
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => {
+            return Err(StoreError::Io {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+    };
+    // `split_inclusive('\n')`:每一段都保留結尾的換行,最後一段沒有換行就是寫到一半的那行。
+    let mut lines = Vec::new();
+    for (index, piece) in text.split_inclusive('\n').enumerate() {
+        let Some(line) = piece.strip_suffix('\n') else {
+            break; // 沒有換行:上次寫到一半就當掉,當成沒做過。
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parsed = serde_json::from_str(line).map_err(|e| StoreError::Corrupt {
+            path: path.to_path_buf(),
+            line: index + 1,
+            message: e.to_string(),
+        })?;
+        lines.push(parsed);
+    }
+    Ok(lines)
+}
+
+/// 往一個 JSONL 檔(`responses.jsonl`、`scores/<name>.jsonl`)後面加一行。
 pub struct Appender {
     file: File,
     path: PathBuf,
 }
 
 impl Appender {
-    pub fn append(&mut self, line: &ResponseLine) -> Result<(), StoreError> {
+    fn open(path: &Path) -> Result<Self, StoreError> {
+        let mut file = private_file(path, true)?;
+        drop_partial_line(&mut file).at(path)?;
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+        })
+    }
+
+    // `impl Serialize`:任何能寫成 JSON 的型別。這是「參數位置的 impl Trait」,等於一個匿名的泛型參數。
+    pub fn append(&mut self, line: &impl Serialize) -> Result<(), StoreError> {
         // 先組好完整的一行再一次寫出去:不會出現兩筆交錯在同一行(同 001 的 `JsonlWriter`)。
         let mut bytes = serde_json::to_vec(line)
             .map_err(io::Error::other)
@@ -276,10 +377,9 @@ fn drop_partial_line(file: &mut File) -> io::Result<()> {
     file.read_to_end(&mut bytes)?;
     // `rposition`:從後面找第一個符合的位置。沒有換行(整個檔案就是半行)就截到 0。
     let keep = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    if keep < bytes.len() {
-        // `set_len`:截短檔案。Java 對照:`FileChannel.truncate(size)`。
-        file.set_len(keep as u64)?;
-    }
+    // `set_len`:截短檔案。Java 對照:`FileChannel.truncate(size)`。沒有半行時 `keep` 就是原長度,什麼都不變,
+    // 所以不另外判斷(cargo-mutants:原本的 `if keep < len` 換成 `<=` 時行為一樣,是多餘的分支)。
+    file.set_len(keep as u64)?;
     Ok(())
 }
 
@@ -330,6 +430,7 @@ mod tests {
         ResponseLine {
             case_id: case_id.into(),
             sample,
+            input_sha256: "in-sha".into(),
             result: CallResult::Ok {
                 output: Output::Chat(Response {
                     id: None,
@@ -529,6 +630,7 @@ mod tests {
         let error = ResponseLine {
             case_id: "b".into(),
             sample: 0,
+            input_sha256: "in-sha".into(),
             result: CallResult::Error {
                 error: RecordedError {
                     kind: "timeout".into(),
@@ -544,10 +646,66 @@ mod tests {
             json!({
                 "case_id": "b",
                 "sample": 0,
+                "input_sha256": "in-sha",
                 "outcome": "error",
                 "error": { "kind": "timeout", "message": "no answer within 300 s" },
                 "latency_ms": 300_000
             })
         );
+    }
+
+    #[test]
+    fn score_files_live_in_a_private_scores_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = RunDir::create(&tmp.path().join("runs"), &meta("cheap")).unwrap();
+        let scores = dir.scores("sonnet-judge.v2").unwrap();
+
+        // 還沒打過分:沒有 meta、沒有任何一行,也還沒建立 `scores/`。
+        assert_eq!(scores.read_meta::<serde_json::Value>().unwrap(), None);
+        assert!(scores.read_lines::<serde_json::Value>().unwrap().is_empty());
+        assert!(!dir.path().join("scores").exists());
+
+        scores.write_meta(&json!({ "judge": "default" })).unwrap();
+        let mut out = scores.appender().unwrap();
+        out.append(&json!({ "case_id": "a" })).unwrap();
+        out.append(&json!({ "case_id": "b" })).unwrap();
+
+        assert_eq!(
+            scores.read_meta::<serde_json::Value>().unwrap(),
+            Some(json!({ "judge": "default" }))
+        );
+        assert_eq!(
+            scores.read_lines::<serde_json::Value>().unwrap(),
+            [json!({ "case_id": "a" }), json!({ "case_id": "b" })]
+        );
+        let root = dir.path().join("scores");
+        assert_eq!(mode(&root), 0o700);
+        assert_eq!(mode(&root.join("sonnet-judge.v2.jsonl")), 0o600);
+        assert_eq!(mode(&root.join("sonnet-judge.v2.meta.json")), 0o600);
+        assert!(!root.join("sonnet-judge.v2.meta.json.tmp").exists());
+    }
+
+    #[test]
+    fn score_names_that_could_escape_or_hide_are_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = RunDir::create(&tmp.path().join("runs"), &meta("cheap")).unwrap();
+        for bad in [
+            "",
+            "..",
+            ".hidden",
+            "a/b",
+            "../x",
+            "-flag",
+            "有中文",
+            &"a".repeat(65),
+        ] {
+            assert!(
+                matches!(dir.scores(bad), Err(StoreError::InvalidScoreName(name)) if name == bad),
+                "{bad:?} should be refused"
+            );
+        }
+        for good in ["a", "sonnet-judge", "judge_2026.11", "0", &"a".repeat(64)] {
+            assert!(dir.scores(good).is_ok(), "{good:?} should be accepted");
+        }
     }
 }

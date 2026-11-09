@@ -3,6 +3,7 @@
 //! 每個打分器看一個案例與它的輸出,對每一條標準給出一個判決(`Verdict`):通過、不通過,或打分器本身出錯。
 
 mod check;
+mod flow;
 mod judge;
 
 use futures::future::BoxFuture;
@@ -12,9 +13,13 @@ use serde::{Deserialize, Serialize};
 use crate::case::{Case, Output};
 
 pub use check::Checks;
+pub use flow::{
+    JudgeConfig, JudgeStatus, ScoreConfig, ScoreError, ScoreEstimate, ScoreLine, ScoreMeta,
+    ScoreReport, ScoreResult, ScoreSetup, ScoreSummary, ScoreWarning, estimate, score,
+};
 pub use judge::Judge;
 
-/// 打分器。現在有確定性檢查(`Checks`);第 4 步加 LLM 評審,之後也可能有其他的(例如 Jev)。
+/// 打分器。現在有確定性檢查(`Checks`)與 LLM 評審(`Judge`),之後也可能有其他的(例如 Jev)。
 ///
 /// 評審要呼叫 LLM,所以是 async。回傳 `BoxFuture` 而不是寫成 `async fn`:
 /// trait 裡的 `async fn` 回傳的型別每個實作都不同,沒辦法放進 `Vec<Box<dyn Scorer>>`(跟 `llm::LlmProvider` 同樣的理由)。
@@ -34,6 +39,8 @@ pub struct Scored {
     pub verdicts: Vec<Verdict>,
     /// 打分本身用掉的 token(評審要付錢;確定性檢查是 0)。寫進 `scores/<name>.meta.json`(design §6)。
     pub usage: Usage,
+    /// 實際回答的評審模型 id(別名換過之後的)。用來偵測「自己評自己」;確定性檢查是 `None`。
+    pub model: Option<String>,
 }
 
 /// 對一條標準的判決。打分的結果檔(`scores/<name>.jsonl`)裡每一筆都是它。

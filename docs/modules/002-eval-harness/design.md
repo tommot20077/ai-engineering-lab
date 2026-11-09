@@ -112,7 +112,8 @@ eval run --resume <執行目錄> [--budget 5.00] [--retry-errors]
 ```
 meta.json         執行 id、開始與結束時間、資料集(名稱、路徑、SHA-256、案例數)、模型(別名與實際 id)、
                   provider options、重複次數、git commit、eval 版本、label
-responses.jsonl   一行一次呼叫:case_id、sample、outcome(ok / error)、response 或 error、usage、latency_ms
+responses.jsonl   一行一次呼叫:case_id、sample、input_sha256(這題輸入的 hash,打分時確認題目沒變)、
+                  outcome(ok / error)、response 或 error、usage、latency_ms
 scores/           打分的結果,見 §6
 ```
 
@@ -187,6 +188,24 @@ pub struct Verdict {
       寫進報告。
 - **案例的結果**:全部檢查與標準都通過 = 通過。`Error` 不算通過,也不算不通過,單獨統計;
   只要有 `Error`,報告就提醒「這次打分不完整」。
+
+### 打分流程的規則(第 5 步實作時定下)
+
+- **一筆回應一個結果**(`scores/<name>.jsonl` 的 `result`):有任何一條不通過 → `fail`(評審出錯也改變不了);
+  沒有不通過但有 `Error` → `incomplete`;全部通過 → `pass`;一條判決都沒有也是 `incomplete`(沒有證據不能說通過)。
+  呼叫模型就失敗的回應記成 `call_error`,不叫評審,算沒通過(§5)。
+- **改評分不必重跑,改題目要重跑**:每筆回應記下輸入的 hash。打分時資料集可以改檢查、評分標準、參考答案,
+  但每個案例的輸入必須跟回答時一樣,否則拒絕(舊的回答是另一題的答案);執行裡有回應的案例不見了也拒絕。
+  評分方式另外記一個 hash(`criteria_sha256`,這次執行的案例的檢查 + 標準 + 參考答案),`compare` 用它判斷兩份打分是不是同一套標準。
+- **同一個名字 = 接續**:跟 `run --resume` 一樣只補沒評的;設定(評審模型、effort、`skip_on_check_failure`、`criteria_sha256`)
+  有任何不同就拒絕並列出差異,請換一個名字。每筆打分記下它評的是 `responses.jsonl` 的第幾筆;
+  執行後來重做了那個 (案例, 抽樣)(`--retry-errors`),舊的打分作廢,摘要把它算成「還沒評」,下次打分重評。
+- **有評分標準就一定要有評審**:沒給評審、但案例有評分標準時拒絕開始(只做檢查會把沒評的標準當成通過)。
+- **只有「檢查沒過」才省掉評審**,檢查自己出錯(`Error`)不算:評審說不通過的話,結果會從 `incomplete` 變成 `fail`。
+  省掉的回應記成 `judge: skipped`,沒有評分標準的逐條結果;第 6 步算部分得分時要決定怎麼處理它們。
+- **預算、估價、逾時同 §5**:預算算的是評審的錢(整份打分累計,含之前接續前的);只做確定性檢查時不花錢,不需要價格。
+  估價假設檢查全部通過(每一筆有評分標準的回答都叫評審)。評審逾時時,每一條標準記成 `Error`。
+- **自我偏好**:被評模型的別名或實際 id,跟評審的別名或實際 id 有重疊,就回傳警告(別名不同也可能指向同一個模型)。
 
 ## 7. 比較:`eval compare`(D-032)
 

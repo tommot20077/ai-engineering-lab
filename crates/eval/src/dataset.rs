@@ -146,7 +146,7 @@ fn without_position(e: &serde_json::Error) -> String {
 }
 
 /// SHA-256,寫成 64 個十六進位字元。
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     // `Sha256::digest` 來自 `Digest` trait:trait 要 `use` 進來,它的方法才叫得到。
     // Java 對照:`MessageDigest.getInstance("SHA-256").digest(bytes)`,再自己轉成十六進位。
     Sha256::digest(bytes)
@@ -459,5 +459,21 @@ mod tests {
                 meta: Default::default()
             }]
         );
+    }
+
+    #[test]
+    fn the_input_hash_ignores_how_the_answer_is_judged_but_not_the_question() {
+        // 改評分標準、檢查、參考答案、tag:題目沒變,hash 一樣(舊的回答還能拿來重新打分)。
+        let base = r#","checks":[{"type":"contains","value":"hello"}]"#;
+        let rejudged = r#","tags":["x"],"checks":[{"type":"contains","value":"bye"}],"rubric":["r"],"reference":"ref""#;
+        let hash =
+            |text: &str| Dataset::parse("ds", text.as_bytes()).unwrap().cases[0].input_sha256();
+        let a = hash(&line("a", base));
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "{a}");
+        assert_eq!(hash(&line("a", rejudged)), a);
+        // 題目的文字或 max_tokens 變了:hash 不同。
+        assert_ne!(hash(&line("a", base).replace("\"hi\"", "\"hey\"")), a);
+        assert_ne!(hash(&line("a", base).replace("64", "65")), a);
     }
 }
