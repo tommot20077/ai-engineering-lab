@@ -178,11 +178,12 @@ fn dataset_id<'a>(dataset: &'a Dataset, item: &WorkItem) -> &'a str {
 /// 最壞情況的估價。
 pub fn estimate(dataset: &Dataset, items: &[WorkItem], price: Option<Price>) -> Estimate {
     let worst_case_usd = price.map(|price| {
-        items
-            .iter()
-            .filter_map(|item| dataset.cases.get(item.case_index))
-            .map(|case| worst_case(case, price))
-            .sum()
+        sum_usd(
+            items
+                .iter()
+                .filter_map(|item| dataset.cases.get(item.case_index))
+                .map(|case| worst_case(case, price)),
+        )
     });
     Estimate {
         calls: items.len(),
@@ -222,7 +223,7 @@ pub fn summarize(dataset: &Dataset, planned: &[WorkItem], lines: &[ResponseLine]
         .iter()
         .all(|line| matches!(line.result, CallResult::Error { .. }) || line.cost_usd.is_some());
     // 每一行都是一次付了錢的呼叫(含後來重做的失敗),全部加起來。
-    let cost_usd = priced.then(|| lines.iter().filter_map(|line| line.cost_usd).sum());
+    let cost_usd = priced.then(|| sum_usd(lines.iter().filter_map(|line| line.cost_usd)));
     Summary {
         planned: planned.len(),
         ok,
@@ -309,7 +310,7 @@ async fn execute(
     let before = dir.read_responses()?;
     let todo = pending(dataset, &planned, &before, retry_errors);
     // 預算算的是「整次執行」:接續時,之前花的也算進去。
-    let spent = Spent::new(before.iter().filter_map(|line| line.cost_usd).sum());
+    let spent = Spent::new(sum_usd(before.iter().filter_map(|line| line.cost_usd)));
 
     let mut out = dir.appender()?;
     // `buffer_unordered(n)`:最多同時 n 個 future 在進行,誰先完成就先拿到誰。
@@ -387,6 +388,14 @@ async fn call(
         latency_ms,
         cost_usd,
     })
+}
+
+/// 金額加總,從 0.0 開始。
+///
+/// 不用 `.sum()`:浮點數的 `Sum` 從 **-0.0** 開始加(這樣 `[-0.0].sum()` 才會是 -0.0),所以空的加總是 -0.0,
+/// 印出來變成 `$-0.0000`。`-0.0 == 0.0` 是 true,比對數值的測試看不出來;E2E 看輸出的文字才抓到。
+pub(crate) fn sum_usd(values: impl Iterator<Item = f64>) -> f64 {
+    values.fold(0.0, |total, usd| total + usd)
 }
 
 /// 累計花費。存成「百萬分之一美元」的整數,才能用 `AtomicU64`(沒有 atomic 的 f64)。
@@ -924,5 +933,13 @@ mod tests {
         // 失敗的呼叫沒有費用(算 0),總額照樣算得出來。
         let s = summarize(&ds, &items, &[answered("a", None)]);
         assert_eq!((s.errors, s.missing, s.cost_usd), (1, 1, Some(0.0)));
+        // +0.0,不是 -0.0(空的 `.sum()` 是 -0.0,印出來會是 `$-0.0000`;`-0.0 == 0.0`,上面看不出來)。
+        assert!(s.cost_usd.is_some_and(f64::is_sign_positive));
+        // 估價也一樣:沒有要做的呼叫,最壞情況是 $0。
+        let none = estimate(&ds, &[], Some(PRICE));
+        assert!(
+            none.worst_case_usd
+                .is_some_and(|usd| usd == 0.0 && usd.is_sign_positive())
+        );
     }
 }

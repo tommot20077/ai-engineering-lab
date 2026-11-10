@@ -23,7 +23,7 @@ use super::judge::error_verdicts;
 use super::{Checks, Judge, Scored, Scorer, Verdict, VerdictResult};
 use crate::case::{Case, Output};
 use crate::dataset::{Dataset, DatasetError, sha256_hex};
-use crate::run::{ExecOptions, Price, RunConfig, Spent, cost, plan};
+use crate::run::{ExecOptions, Price, RunConfig, Spent, cost, plan, sum_usd};
 use crate::store::{CallResult, ResponseLine, RunDir, RunMeta, ScoreFiles, StoreError};
 
 /// 這次打分要怎麼評。
@@ -213,10 +213,11 @@ pub fn estimate(
     };
     // `zip` 兩個 Option:評審與價格都有,才算得出金額。
     let worst_case_usd = setup.judge.zip(price).map(|(judge, price)| {
-        calls
-            .iter()
-            .map(|(case, output)| judge.worst_case_usd(case, output, price))
-            .sum()
+        sum_usd(
+            calls
+                .iter()
+                .map(|(case, output)| judge.worst_case_usd(case, output, price)),
+        )
     });
     Ok(ScoreEstimate {
         judge_calls: calls.len(),
@@ -248,7 +249,7 @@ pub async fn score(
     p.files.write_meta(&meta)?;
 
     // 預算算的是整份打分:接續時,之前花的也算進去。
-    let spent = Spent::new(p.previous.iter().filter_map(|l| l.cost_usd).sum());
+    let spent = Spent::new(sum_usd(p.previous.iter().filter_map(|l| l.cost_usd)));
     let mut out = p.files.appender()?;
     // 跟 `run` 一樣:`buffer_unordered` 在同一個任務裡輪流執行,直接借用 `p`、`setup`,不需要 `Arc`。
     let mut results = futures::stream::iter(p.todo.iter().copied())
@@ -631,7 +632,7 @@ fn summarize(responses: &[ResponseLine], latest: &[usize], lines: &[ScoreLine]) 
     summary.cost_usd = called
         .iter()
         .all(|l| l.cost_usd.is_some())
-        .then(|| called.iter().filter_map(|l| l.cost_usd).sum());
+        .then(|| sum_usd(called.iter().filter_map(|l| l.cost_usd)));
     summary
 }
 

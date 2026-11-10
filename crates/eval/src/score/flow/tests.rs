@@ -349,6 +349,8 @@ async fn checks_only_scoring_writes_one_line_per_response_and_a_meta() {
         cost_usd: Some(0.0),
     };
     assert_eq!(report.summary, expected);
+    // 是 +0.0 不是 -0.0:`-0.0 == 0.0` 成立,上面的比對看不出來,但印出來會變成 `$-0.0000`。
+    assert!(report.summary.cost_usd.is_some_and(f64::is_sign_positive));
     assert!(report.warnings.is_empty());
     let meta = score_meta(&s.run, "checks").unwrap();
     assert_eq!(meta.summary, Some(expected));
