@@ -269,7 +269,10 @@ async fn run_score_and_compare_two_models_on_the_smoke_dataset() {
     let report = lab
         .ok(&["compare", a.to_str().unwrap(), b.to_str().unwrap()])
         .await;
-    assert!(report.contains("scores `checks`: checks only"), "{report}");
+    assert!(
+        report.contains("scores `checks`: checks only\n"),
+        "{report}"
+    );
     assert!(
         report.contains("all-pass         75.0%  100.0%"),
         "{report}"

@@ -41,10 +41,11 @@
 ## 目前位置
 
 - **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 10 步:公開資料集(`evals/smoke.jsonl`、`evals/rust-basics.jsonl`)、E2E smoke(真的執行 eval binary,
-  上游是 wiremock:`run` → `score` → `compare`)、crate README(含 A/A 雜訊底線的做法)、第一次真的比較(cheap vs default)。
-  第 1~9 步完成:資料集、`Scorer` + 確定性檢查、執行器、LLM 評審、打分流程(design §6)、統計、比較報告(design §7)、
-  CLI 與 `eval.toml`(design §8)、`eval add`(從呼叫紀錄加案例,design §4)。
+- **下一步**:002 第 10 步的最後一項:第一次真的比較(`rust-basics`,`cheap` 對 `default`,評審 `default`),
+  結果寫進 `crates/eval/README.md`;之後第 11 步寫 retro。需要 `ANTHROPIC_API_KEY`(雲端 session 要重新啟動才會載入環境變數)。
+  第 1~10 步的其他部分完成:資料集、`Scorer` + 確定性檢查、執行器、LLM 評審、打分流程(design §6)、統計、
+  比較報告(design §7)、CLI 與 `eval.toml`(design §8)、`eval add`(design §4)、公開資料集(`evals/`)、
+  E2E(真的執行 eval 程式,上游是 wiremock)、crate README、`examples/offline.rs`。
   沒評的標準記成 `Skipped`、統計時算 0 分(2026-11-09 決定,design §7)。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -100,7 +101,7 @@
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
-| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 設計完成(D-029~D-035),實作中 |
+| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 實作完成(第 1~10 步),待第一次真的比較與 retro |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |

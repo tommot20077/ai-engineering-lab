@@ -352,6 +352,14 @@ output = 0.0
 | E2E(CI 的 smoke) | 真的執行 eval binary,上游是 wiremock:`run` → `score` → `compare`,檢查檔案與報告 |
 | Live | 手動:用 `rust-basics` 比較 `cheap` 與 `default`,結果寫進 README 當範例 |
 
+第 10 步實作時補上的:
+- `tests/datasets.rs`:`evals/` 裡的每個公開資料集都要讀得進來(手寫的檔案改壞了,在 CI 抓到)。
+- E2E 的假 Claude 依題目決定回答(`cheap` 答錯 JSON 那一題、`default` 全對),比較報告的數字可以預期;
+  評審的請求(system 裡有 "strict grader")回覆逐條通過。工作目錄是暫存目錄,不會讀到 repo 的 `.env`。
+- E2E 抓到一個單元測試抓不到的 bug:浮點數的 `.sum()` 從 -0.0 開始,空的費用加總印成 `$-0.0000`
+  (`-0.0 == 0.0`,比對數值的測試看不出來)。金額加總一律從 0.0 開始(`run::sum_usd`)。
+- `examples/offline.rs`:用 library 與假的 provider 跑完 `run` → `score` → `compare`,不需要 API key。
+
 ## 11. 新增的依賴
 
 | crate | 用途 | 備註 |

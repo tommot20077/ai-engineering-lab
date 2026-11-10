@@ -507,10 +507,11 @@ impl fmt::Display for Report {
             Some(j) => format!("judge {} (effort {})", j.model, j.effort),
             None => "checks only".to_owned(),
         };
-        let skip = if self.scores.skip_on_check_failure {
-            ", judge skipped when a check fails"
-        } else {
-            ", judge on every answer"
+        // 只做確定性檢查時沒有評審,「跳不跳過評審」不適用,不印。
+        let skip = match (&self.scores.judge, self.scores.skip_on_check_failure) {
+            (None, _) => "",
+            (Some(_), true) => ", judge skipped when a check fails",
+            (Some(_), false) => ", judge on every answer",
         };
         writeln!(f, "  scores `{}`: {judge}{skip}", self.score_name)?;
 

@@ -857,3 +857,34 @@ fn the_scoring_to_compare_is_the_one_both_runs_have() {
         "{err:?}"
     );
 }
+
+#[test]
+fn the_header_says_how_the_judge_was_used() {
+    let header = |judge: bool, skip: bool| {
+        let mut a = simple("cheap", &[("x", true)]);
+        let mut b = simple("default", &[("x", true)]);
+        for side in [&mut a, &mut b] {
+            if !judge {
+                side.scores.config.judge = None;
+            }
+            side.scores.config.skip_on_check_failure = skip;
+        }
+        let report = compare(&a, &b, false).unwrap().to_string();
+        report
+            .lines()
+            .find(|l| l.contains("scores `j`"))
+            .unwrap()
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(
+        header(true, true),
+        "scores `j`: judge default (effort low), judge skipped when a check fails"
+    );
+    assert_eq!(
+        header(true, false),
+        "scores `j`: judge default (effort low), judge on every answer"
+    );
+    // 沒有評審:「跳不跳過評審」不適用。
+    assert_eq!(header(false, true), "scores `j`: checks only");
+}

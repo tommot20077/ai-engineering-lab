@@ -32,7 +32,7 @@ Python 模型層  微調 · embedding / reranker · 推論服務
 | # | 模組 | 狀態 |
 |---|---|---|
 | 001 | **LLM Gateway**:provider 抽象、串流、重試、呼叫紀錄、本機 HTTP 服務 | ✅ 完成 |
-| 002 | Eval Harness:用真實案例累積測試集、打分、看趨勢 | 設計完成([design](docs/modules/002-eval-harness/design.md)) |
+| 002 | **Eval Harness**:資料集、打分(確定性檢查 + LLM 評審)、paired bootstrap 比較、從呼叫紀錄累積案例 | 實作完成,待第一次真的比較與回顧 |
 | 003 | Agent runtime + tool calling + MCP | 規劃中 |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | 規劃中 |
 | 005 | 個人助理應用(把 001~004 組起來) | 規劃中 |
@@ -46,6 +46,7 @@ Python 模型層  微調 · embedding / reranker · 推論服務
 | [`llm`](crates/llm/README.md) | 與 provider 無關、以串流為核心的 LLM client;decorator(別名、重試、紀錄) | library |
 | [`gateway`](crates/gateway/README.md) | 把 `llm` 包成本機 HTTP 服務:token / Host 檢查、上限、SSE、優雅關機,每次呼叫寫一行 JSONL | binary |
 | [`config-loader`](crates/config-loader/README.md) | 所有 binary 共用的設定讀取:路徑、TOML、秘密 | library |
+| [`eval`](crates/eval/README.md) | 對資料集跑模型、打分、比較兩次執行(信賴區間、雜訊底線),從呼叫紀錄加案例 | library + binary |
 
 ## 快速開始
 
@@ -61,6 +62,9 @@ cargo run -p llm --example chat -- "用一句話介紹 Rust"
 
 cp gateway.example.toml gateway.toml
 cargo run -p gateway --release    # 用法見 crates/gateway/README.md
+
+cargo run -p eval --example offline   # 不需要 API key:看一次 eval 的完整流程與比較報告
+cp eval.example.toml eval.toml        # 真的比較兩個模型,見 crates/eval/README.md
 ```
 
 ## 怎麼讀這個 repo
