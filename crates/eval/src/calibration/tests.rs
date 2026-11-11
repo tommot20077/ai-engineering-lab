@@ -225,6 +225,37 @@ fn id_answer_and_source_model_cannot_be_blank() {
 }
 
 #[test]
+fn the_error_message_lists_each_problem_on_its_own_line() {
+    // 校準集寫錯時,使用者讀的就是這段訊息(cargo-mutants 在第 2 步找到:把清單換成空字串,沒有測試會失敗)。
+    let text = [
+        item("", |_| {}),
+        item("x", |m| {
+            m.insert("case".into(), json!("nope"));
+        }),
+    ]
+    .join("\n");
+    let err = CalibrationSet::parse(text.as_bytes(), &dataset()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "invalid calibration set for dataset `ds`:\n  - line 1: `id` is empty\n  - line 2 (`x`): unknown case `nope` in dataset `ds`"
+    );
+}
+
+#[test]
+fn labels_must_be_an_object() {
+    // serde 的型別錯誤訊息會接上 visitor 的 `expecting`:要說清楚需要什麼(第 2 步 cargo-mutants 找到的缺口)。
+    let p = problems(&item("x", |m| {
+        m.insert("expected".into(), json!(["fail", "pass"]));
+    }));
+    assert_eq!(p.len(), 1, "{p:#?}");
+    assert!(
+        p[0].contains("expected an object mapping each criterion to \"pass\" or \"fail\""),
+        "{}",
+        p[0]
+    );
+}
+
+#[test]
 fn an_empty_set_is_rejected() {
     assert_eq!(problems("\n\n"), ["the calibration set has no answers"]);
 }

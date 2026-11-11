@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::dataset::{line_of, without_position};
+use crate::dataset::{bullet_list, line_of, without_position};
 use crate::{Case, Dataset};
 
 /// 讀進來、檢查過的校準集。
@@ -88,14 +88,6 @@ pub enum CalibrationError {
         dataset: String,
         problems: Vec<String>,
     },
-}
-
-fn bullet_list(problems: &[String]) -> String {
-    problems
-        .iter()
-        .map(|p| format!("  - {p}"))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 impl CalibrationSet {

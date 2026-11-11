@@ -35,7 +35,7 @@ pub enum DatasetError {
     Invalid { name: String, problems: Vec<String> },
 }
 
-fn bullet_list(problems: &[String]) -> String {
+pub(crate) fn bullet_list(problems: &[String]) -> String {
     problems
         .iter()
         .map(|p| format!("  - {p}"))
