@@ -234,7 +234,7 @@ agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
 | 3 | 指標:抓錯率、冤枉率、Wilson 區間、一致率(純函式,已知答案用獨立的 Python 實作算)**(完成)** | `FromIterator`(自己的型別也能 `collect()`)、浮點數的邊界 |
 | 4 | `eval calibrate` 指令 + 報告(insta snapshot)+ E2E(wiremock 的假評審)**(完成)** | 重用 `Scorer`、clap 的重複參數、`collect::<Option<Vec<_>>>()`、算數字與排版分兩層 |
 | 5 | `evals/calibration/rust-basics.jsonl`(40 筆,§3)**(完成)** | `use … as …` 處理同名的型別 |
-| 6 | 真的跑(§5),結果寫進 README;更新 retro | — |
+| 6 | 真的跑(§5),結果寫進 README;更新 retro **(完成,見 crate README「第二次比較」)** | — |
 
 ## 8. 已決定的事(2026-11-11,使用者確認)
 

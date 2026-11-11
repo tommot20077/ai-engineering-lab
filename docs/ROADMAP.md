@@ -49,10 +49,13 @@
   兩邊 12/12 全過,差 +0.0、95% CI [+0.0, +0.0]、翻轉 0 題 → **天花板效應,這份資料集量不出差別**(不是「一樣好」)。
   執行費用差 20 倍、連評審一起算只差 2.3 倍(評審是固定成本);延遲 p50 2.9 秒對 5.1 秒。整個實驗花 $0.177。
   細節與解讀見 `crates/eval/README.md`「第一次真的比較」。
-- **下一步**:002 第二部分 — 有鑑別力的資料集與評審校準(使用者 2026-11-11 決定先做這個,再進 003)。
-  設計 `docs/modules/002-eval-harness/design-part2.md` 已定案(D-038~D-040);實作順序見該文件 §7。第 1 步完成:`evals/rust-intermediate.jsonl`(31 題,19 題的標準答案每次測試都跟 rustc 比對)。第 2 步完成:校準集的型別與讀檔檢查(`crates/eval/src/calibration.rs`)。第 3 步完成:指標(`calibration/metrics.rs`)。第 4 步完成:`eval calibrate` 指令、報告、E2E。第 5 步完成:校準集 `evals/calibration/rust-basics.jsonl`(40 筆、35 條標成 fail)。**下一步:第 6 步,真的跑**(校準 3 個評審 → `rust-intermediate` 兩個模型 × 3 個評審 → compare → A/A),結果寫進 README;要用 API key、會花錢(粗估 $1.5~2)。
-  第 0 步(人工複核第一次比較的 24 個回答)已完成:72 個評審判決全部正確,細節用 rustc 驗證屬實 → 全過是因為題目太簡單,不是評審放水;
-  但那些回答沒有錯可以抓,評審的抓錯率仍未知。之後才是 003 Agent runtime + Tool calling + MCP。
+- **002 第二部分**(2026-11-11 完成):有鑑別力的資料集與評審校準。設計 `docs/modules/002-eval-harness/design-part2.md`(D-038~D-040),
+  回顧 `retro.md` 的第二部分,結果見 `crates/eval/README.md`「第二次比較」。新增 `evals/rust-intermediate.jsonl`(31 題,19 題的答案每次測試都跟 rustc 比對)、
+  校準集 `evals/calibration/rust-basics.jsonl`(40 筆、35 條標成 fail)、`eval calibrate`(抓錯率、冤枉率、被 injection 騙、一致率,Wilson 區間)。
+  **結果**:評審可信(Opus、Sonnet 抓到 35/35,Haiku 33/35;對照組 0 冤枉;injection 0/4);`rust-intermediate` 上 Haiku 87.1% 對 Sonnet 96.8%
+  (+9.7 [+0.0, +22.6]),但 A/A 就有 +6.5、3 題翻轉裡 2 題在 A/A 也翻轉 → **仍然分不出兩個模型**;三個評審逐條 100% 一致。評審維持 Sonnet。花 $1.11。
+- **下一步**:003 Agent runtime + Tool calling + MCP 的設計(有設計分岔,先列方案給使用者選,再寫)。
+  eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
@@ -110,7 +113,7 @@
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
-| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 第一部分完成(第 1~11 步,含第一次真的比較;回顧見 `retro.md`);第二部分(資料集與評審校準)設計中,見 `design-part2.md` |
+| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 完成:第一部分(第 1~11 步,第一次真的比較)、第二部分(資料集與評審校準,第二次比較);回顧見 `retro.md` |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
@@ -168,10 +171,14 @@
   001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
 - **呼叫紀錄的保留期限與壓縮(006 一起設計)**:目前只依 UTC 日期切檔,不依大小切(每天約數 MB)。
   到 006 時決定舊檔多久壓縮、多久刪除,以及要不要匯入 DuckDB / SQLite 查詢。
-- **eval 的資料集要有鑑別力、評審要校準(第一次真的比較發現,2026-11-11)**:`rust-basics` 12 題兩個模型全過,量不出差別。
-  拿 eval 做決定(011 灰度切換、010 路由比較)之前:(1) 加到 30 題以上,而且要有會讓 Haiku 失敗的題目;
-  (2) 量 A/A 雜訊底線;(3) 校準評審:換成不同於被評者的模型,並故意餵錯的回答,確認評審判得出不通過。
-  細節見 `crates/eval/README.md`「要讓這個比較有意義,下一步」。**進行中**:002 第二部分(`design-part2.md`)。
+- **eval 第二次比較的發現,等使用者決定(2026-11-11)**:
+  (1) **評分標準「沒有捏造不存在的語法或 API」有歧義**:評審把錯誤的「行為」也算捏造,校準集的 20 次「冤枉」全在這一條、全在已經改壞的回答上
+  (對照組 0 冤枉)。選項:改標準的字(例如「語法、API 或語言行為」)、改校準集的標籤跟著評審、或拆成兩條。改字會讓 `rust-basics` 的 `criteria_sha256` 變,舊的打分要重打。
+  (2) **格式失誤要不要算錯**:Haiku 答對 `E0506` 卻多印一行 `</br>`,「最後一行只寫答案」的檢查沒過。選項:照現在(遵守格式也是能力)、或放寬容許結尾的 HTML 標籤與空行。
+  (3) **`open-pin` 的 Unpin 標準**三次都沒過、兩個模型一樣,分不出模型:改寬、或刪掉。
+  (4) **評審的判決與理由對不上**(Haiku 在 `lifetimes-001-subtle` 把兩條的判決對調):要不要加檢查(例如再叫一次評審確認、或比對理由的關鍵字)。
+  (5) **題目的種類**:19 題 compiler 題 Haiku 全對;要分出模型,需要長推理、讀程式找 bug、多步驟設計這類題,或更多題加 `--repeats`。
+  (6) lab-step 的測試清單可以補四條(retro 第二部分 §4):預期值不能用被測的另一個函式算、測試資料要不對稱、假的 provider 太快會藏住順序、資料全對時要有負對照。
 - **`finished_at` 等於 `started_at`(bug,第一次真的執行發現)**:`run_command`、`score_command` 在工作開始前呼叫一次
   `Timestamp::now()`,同一個值同時當成開始與結束時間(`run.rs` 設 `meta.finished_at = Some(now)`、`score/flow.rs` 同)。
   單元測試用注入的時間,看不出來。修法:結束時再取一次時間(`now` 參數拆成開始與結束,或注入時鐘);
