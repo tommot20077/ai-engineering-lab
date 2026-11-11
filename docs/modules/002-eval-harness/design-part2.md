@@ -104,6 +104,15 @@
 - 只校準評審,不跑確定性檢查(那是確定的,不需要校準)。
 - `source_model` 用來看自我偏好:評審評「自己寫的回答」是不是比較寬鬆。
 
+### 讀檔的細節(第 2 步實作時定下,`calibration.rs`)
+
+- 兩層型別:serde 讀出 `RawItem`,檢查全部通過才變成 `Item`;`Item` 的 `labels` 已經依評分標準的順序排好,一條標準一個。
+- `expected` 用自己寫的 serde visitor 讀:讀成 `HashMap` 時,重複的 key 會被後面的默默蓋掉(同一條標準寫了 `pass` 又寫 `fail`,只剩一個)。
+- 每一行的檢查:`id`、`answer`、`source_model` 不能是空白;`case` 必須在資料集裡、而且有評分標準;
+  `expected` 的 key 跟該題的評分標準完全一致(多的、少的都報);`control` 全部 `pass` 而且沒有 `change`;
+  其他種類至少一條 `fail`,而且 `change` 要寫改了什麼。id 重複、未知欄位、空檔案都拒絕。
+- `CalibrationError::Read` 的訊息不含原因,原因只放在錯誤鏈裡(ROADMAP 待辦記的「原因印兩次」,新的型別一開始就避開)。
+
 ## 4. `eval calibrate`
 
 ```
@@ -179,7 +188,7 @@ agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
 | # | 內容 | 主要 Rust 概念 |
 |---|---|---|
 | 1 | `rust-intermediate` 資料集 + 資料集測試(標準答案每次都跟 rustc 比對)**(完成)** | `std::process::Command`、`std::thread::scope`、`find_map` |
-| 2 | 校準集的型別與讀檔檢查(`calibration.rs`) | `HashMap` 當 key-value 標籤、跨檔案的一致性檢查 |
+| 2 | 校準集的型別與讀檔檢查(`calibration.rs`)**(完成)** | parse, don't validate(`RawItem` → `Item`)、serde 的 `Visitor`、跨檔案的一致性檢查 |
 | 3 | 指標:抓錯率、冤枉率、Wilson 區間、一致率(純函式,已知答案用獨立的 Python 實作算) | 純函式、浮點數的邊界 |
 | 4 | `eval calibrate` 指令 + 報告(insta snapshot)+ E2E(wiremock 的假評審) | 重用 `Scorer`、clap 的重複參數 |
 | 5 | `evals/calibration/rust-basics.jsonl`(約 40 筆,§3) | — (資料) |

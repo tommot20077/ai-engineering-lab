@@ -190,6 +190,7 @@ runs/20261110T023000Z_rust-basics_cheap/
 | `src/stats.rs` | 兩種指標、每條標準的通過率、配對、paired bootstrap(自己寫的 SplitMix64,固定種子) |
 | `src/compare.rs` | 比較報告:設定一致性、雜訊底線、翻轉的案例、tag、成本、延遲 |
 | `src/add.rs` | 從呼叫紀錄加案例(UUID v7 取出時間找到紀錄檔) |
+| `src/calibration.rs` | 校準集:讀檔與檢查(標籤對得上評分標準、對照組與改壞的回答各自的規則),design-part2 §3 |
 | `src/config.rs`、`src/cli.rs` | `eval.toml` 的檢查、命令列的規則(純函式,有單元測試) |
 | `src/main.rs` | composition root:唯一讀設定檔、環境變數、`.env` 的地方 |
 

@@ -130,14 +130,14 @@ impl Dataset {
 }
 
 /// 第 `offset` 個 byte 在第幾行(從 1 開始)。
-fn line_of(bytes: &[u8], offset: usize) -> usize {
+pub(crate) fn line_of(bytes: &[u8], offset: usize) -> usize {
     let before = bytes.get(..offset).unwrap_or(bytes);
     before.iter().filter(|&&b| b == b'\n').count() + 1
 }
 
 /// serde_json 的錯誤訊息最後會接「at line 1 column 23」。每一行是分開解析的,那個 line 永遠是 1,
 /// 會誤導人;行號由我們自己加,這裡只留下前面的說明。
-fn without_position(e: &serde_json::Error) -> String {
+pub(crate) fn without_position(e: &serde_json::Error) -> String {
     let message = e.to_string();
     match message.rsplit_once(" at line ") {
         Some((head, _)) => head.to_owned(),
