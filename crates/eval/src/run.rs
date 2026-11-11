@@ -234,6 +234,11 @@ pub fn summarize(dataset: &Dataset, planned: &[WorkItem], lines: &[ResponseLine]
 }
 
 /// 開始一次新的執行。
+///
+/// `clock`:讀目前時間的函式。開始時讀一次當 `started_at`,做完再讀一次當 `finished_at`(兩次是不同的值)。
+/// 為什麼收函式而不是時間:結束時間在呼叫的當下還不存在;測試也才能讓時間在工作中前進。
+/// 正式程式傳 `Timestamp::now`(函式本身,不加括號;Java 對照:method reference `Instant::now`),
+/// 不必另外定義 `Clock` trait。
 #[allow(clippy::too_many_arguments)]
 pub async fn start(
     root: &Path,
@@ -242,14 +247,14 @@ pub async fn start(
     options: ExecOptions,
     provider: &dyn LlmProvider,
     git_commit: Option<String>,
-    now: Timestamp,
+    clock: impl Fn() -> Timestamp,
 ) -> Result<(RunDir, Summary), RunError> {
     // 先檢查,再建立任何東西:沒辦法遵守預算就不開始(fail-closed)。
     check_options(&options)?;
     let dataset = Dataset::load(dataset_path)?;
     let meta = RunMeta {
         eval_version: env!("CARGO_PKG_VERSION").into(),
-        started_at: now,
+        started_at: clock(),
         finished_at: None,
         dataset: DatasetInfo {
             name: dataset.name.clone(),
@@ -262,17 +267,18 @@ pub async fn start(
         summary: None,
     };
     let dir = RunDir::create(root, &meta)?;
-    let summary = execute(&dir, meta, &dataset, options, false, provider, now).await?;
+    let summary = execute(&dir, meta, &dataset, options, false, provider, clock).await?;
     Ok((dir, summary))
 }
 
 /// 接續一次執行:設定從 `meta.json` 讀回來,資料集內容必須沒變。
+/// `started_at` 保留第一次執行的;`finished_at` 換成這次做完的時間(`clock` 見 `start`)。
 pub async fn resume(
     run_dir: &Path,
     options: ExecOptions,
     retry_errors: bool,
     provider: &dyn LlmProvider,
-    now: Timestamp,
+    clock: impl Fn() -> Timestamp,
 ) -> Result<Summary, RunError> {
     check_options(&options)?;
     let dir = RunDir::open(run_dir)?;
@@ -286,7 +292,7 @@ pub async fn resume(
             found: dataset.sha256,
         });
     }
-    execute(&dir, meta, &dataset, options, retry_errors, provider, now).await
+    execute(&dir, meta, &dataset, options, retry_errors, provider, clock).await
 }
 
 fn check_options(options: &ExecOptions) -> Result<(), RunError> {
@@ -304,7 +310,7 @@ async fn execute(
     options: ExecOptions,
     retry_errors: bool,
     provider: &dyn LlmProvider,
-    now: Timestamp,
+    clock: impl Fn() -> Timestamp,
 ) -> Result<Summary, RunError> {
     let planned = plan(dataset, &meta.config);
     let before = dir.read_responses()?;
@@ -330,7 +336,8 @@ async fn execute(
     drop(results);
 
     let summary = summarize(dataset, &planned, &dir.read_responses()?);
-    meta.finished_at = Some(now);
+    // 做完才讀:這時候的時間才是「結束」。
+    meta.finished_at = Some(clock());
     meta.summary = Some(summary.clone());
     dir.write_meta(&meta)?;
     Ok(summary)
@@ -437,6 +444,7 @@ mod tests {
     use llm::{Content, EventStream, ProviderMetadata, Request, Response, StopKind, StopReason};
 
     use super::*;
+    use crate::test_clock::{fixed, minutes_per_call};
 
     /// 假的 provider。題目的文字決定它怎麼回應:
     /// `fail` → 529;`hang` → 永遠不回;`flaky` → `flaky_fails` 為 true 時 529;其他 → 回答。
@@ -624,7 +632,7 @@ mod tests {
             options(2),
             &fake,
             Some("abc123".into()),
-            t("2026-11-01T12:00:00Z"),
+            fixed("2026-11-01T12:00:00Z"),
         )
         .await
         .unwrap();
@@ -676,7 +684,7 @@ mod tests {
             options(3),
             &fake,
             None,
-            t("2026-11-01T12:00:00Z"),
+            fixed("2026-11-01T12:00:00Z"),
         )
         .await
         .unwrap();
@@ -701,7 +709,7 @@ mod tests {
             opts,
             &fake,
             None,
-            t("2026-11-01T12:00:00Z"),
+            fixed("2026-11-01T12:00:00Z"),
         )
         .await
         .unwrap();
@@ -739,7 +747,7 @@ mod tests {
             opts,
             &fake,
             None,
-            t("2026-11-01T12:00:00Z"),
+            fixed("2026-11-01T12:00:00Z"),
         )
         .await
         .unwrap();
@@ -753,9 +761,15 @@ mod tests {
             budget_usd: Some(0.025),
             ..options(1)
         };
-        let middle = resume(dir.path(), tight, false, &fake, t("2026-11-01T12:05:00Z"))
-            .await
-            .unwrap();
+        let middle = resume(
+            dir.path(),
+            tight,
+            false,
+            &fake,
+            fixed("2026-11-01T12:05:00Z"),
+        )
+        .await
+        .unwrap();
         assert_eq!(fake.calls(), 4);
         assert_eq!((middle.ok, middle.missing), (4, 1));
 
@@ -764,9 +778,15 @@ mod tests {
             budget_usd: Some(1.0),
             ..options(1)
         };
-        let second = resume(dir.path(), more, false, &fake, t("2026-11-01T12:10:00Z"))
-            .await
-            .unwrap();
+        let second = resume(
+            dir.path(),
+            more,
+            false,
+            &fake,
+            fixed("2026-11-01T12:10:00Z"),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(fake.calls(), 5);
         assert_eq!((second.ok, second.missing), (5, 0));
@@ -777,6 +797,63 @@ mod tests {
         let meta = dir.read_meta().unwrap();
         assert_eq!(meta.finished_at, Some(t("2026-11-01T12:10:00Z")));
         assert_eq!(meta.started_at, t("2026-11-01T12:00:00Z"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn finished_at_is_read_when_the_work_ends_not_when_it_starts() {
+        let (_tmp, path, runs) = setup(&[line("a", "q1", &[]), line("b", "q2", &[])]);
+        let fake = Fake::default();
+        // 時間跟著「已經呼叫幾次」走:開始時 0 次 → 12:00,做完 4 次 → 12:04。
+        // 如果結束時間在工作開始前就讀了,會是 12:00,跟 `started_at` 一樣。
+        let clock = minutes_per_call("2026-11-01T12:00:00Z", || fake.calls());
+
+        let (dir, _) = start(&runs, &path, config(2), options(2), &fake, None, clock)
+            .await
+            .unwrap();
+
+        assert_eq!(fake.calls(), 4);
+        let meta = dir.read_meta().unwrap();
+        assert_eq!(meta.started_at, t("2026-11-01T12:00:00Z"));
+        assert_eq!(meta.finished_at, Some(t("2026-11-01T12:04:00Z")));
+        // 目錄名稱用 `started_at`(開始時的時間),不是結束時間。
+        let name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(name.contains("20261101T120000Z"), "{name}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resume_keeps_started_at_and_takes_a_new_finished_at() {
+        let (_tmp, path, runs) = setup(&[line("a", "q", &[])]);
+        let fake = Fake::default();
+        // 預算只夠做 3 次(同上面預算那個測試)。
+        let tight = ExecOptions {
+            budget_usd: Some(0.015),
+            ..options(1)
+        };
+        let first_clock = minutes_per_call("2026-11-01T12:00:00Z", || fake.calls());
+        let (dir, _) = start(&runs, &path, config(5), tight, &fake, None, first_clock)
+            .await
+            .unwrap();
+        assert_eq!(fake.calls(), 3);
+        let first = dir.read_meta().unwrap();
+        assert_eq!(first.finished_at, Some(t("2026-11-01T12:03:00Z")));
+
+        // 隔了一陣子接續:時鐘從 18:00 開始,只算接續後新做的 2 次呼叫。
+        let before = fake.calls();
+        let second_clock = minutes_per_call("2026-11-01T18:00:00Z", || fake.calls() - before);
+        resume(dir.path(), options(1), false, &fake, second_clock)
+            .await
+            .unwrap();
+
+        assert_eq!(fake.calls(), 5);
+        let second = dir.read_meta().unwrap();
+        // 開始時間還是第一次執行的 12:00(不是接續時的 18:00);結束時間是這次做完的 18:02。
+        assert_eq!(second.started_at, t("2026-11-01T12:00:00Z"));
+        assert_eq!(second.finished_at, Some(t("2026-11-01T18:02:00Z")));
     }
 
     #[tokio::test(start_paused = true)]
@@ -796,7 +873,7 @@ mod tests {
             opts,
             &fake,
             None,
-            t("2026-11-01T12:00:00Z"),
+            fixed("2026-11-01T12:00:00Z"),
         )
         .await
         .unwrap_err();
@@ -822,7 +899,7 @@ mod tests {
             opts,
             &fake,
             None,
-            t("2026-11-01T12:00:00Z"),
+            fixed("2026-11-01T12:00:00Z"),
         )
         .await
         .unwrap();
@@ -833,7 +910,7 @@ mod tests {
             options(1),
             false,
             &fake,
-            t("2026-11-01T12:10:00Z"),
+            fixed("2026-11-01T12:10:00Z"),
         )
         .await
         .unwrap_err();
@@ -857,7 +934,7 @@ mod tests {
             options(1),
             &fake,
             None,
-            t("2026-11-01T12:00:00Z"),
+            fixed("2026-11-01T12:00:00Z"),
         )
         .await
         .unwrap();
@@ -869,7 +946,7 @@ mod tests {
             options(1),
             false,
             &fake,
-            t("2026-11-01T12:01:00Z"),
+            fixed("2026-11-01T12:01:00Z"),
         )
         .await
         .unwrap();
@@ -883,7 +960,7 @@ mod tests {
             options(1),
             true,
             &fake,
-            t("2026-11-01T12:02:00Z"),
+            fixed("2026-11-01T12:02:00Z"),
         )
         .await
         .unwrap();

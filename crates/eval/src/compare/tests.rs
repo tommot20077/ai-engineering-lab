@@ -610,6 +610,7 @@ fn the_report_reads_well() {
 /// 真的執行目錄:用 `store` 寫出執行、用 `score::score` 打分,再 `load` 回來。
 mod load_from_disk {
     use super::*;
+    use crate::test_clock::fixed;
 
     fn case_line(id: &str, tags: &[&str]) -> String {
         format!(
@@ -661,7 +662,7 @@ mod load_from_disk {
             budget_usd: None,
             price: None,
         };
-        crate::score::score(dir.path(), &setup, options, t("2026-11-02T00:00:00Z"))
+        crate::score::score(dir.path(), &setup, options, fixed("2026-11-02T00:00:00Z"))
             .await
             .unwrap();
         // b 後來重做了(還沒重新打分):舊的打分作廢,不能拿來代表新的回答。

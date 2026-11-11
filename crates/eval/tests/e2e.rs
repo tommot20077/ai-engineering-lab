@@ -191,6 +191,24 @@ fn text(out: &Output) -> (String, String) {
     )
 }
 
+/// meta 檔裡的時間欄位(RFC 3339 字串)。
+fn instant(meta: &Value, field: &str) -> jiff::Timestamp {
+    let text = meta[field]
+        .as_str()
+        .unwrap_or_else(|| panic!("no `{field}` in {meta}"));
+    text.parse().unwrap()
+}
+
+/// 結束時間要比開始時間晚:`finished_at` 是做完才讀的。這裡中間有真的 HTTP 呼叫,所以一定晚。
+/// 單元測試用注入的時鐘驗證過邏輯;這裡驗證 `main` 傳進去的是真的時鐘(不是事先讀好的一個值)。
+fn assert_finished_after_started(meta: &Value) {
+    let (started, finished) = (instant(meta, "started_at"), instant(meta, "finished_at"));
+    assert!(
+        finished > started,
+        "finished_at {finished} should be after started_at {started}"
+    );
+}
+
 /// `run: <執行目錄>` 那一行。
 fn run_dir(stdout: &str) -> PathBuf {
     let line = stdout
@@ -244,6 +262,7 @@ async fn run_score_and_compare_two_models_on_the_smoke_dataset() {
     assert_eq!(meta["config"]["model"], "cheap");
     // 暫存目錄不在 git repo 裡:不記 commit(不是錯誤)。
     assert!(meta.get("git_commit").is_none(), "{meta}");
+    assert_finished_after_started(&meta);
 
     let b = run_dir(
         &lab.ok(&["run", "--dataset", "smoke", "--model", "default"])
@@ -373,6 +392,12 @@ async fn the_judge_grades_the_rubric_and_warns_when_judging_itself() {
     assert!(stdout.contains("judge calls 2 (skipped 0)"), "{stdout}");
     assert!(!stderr.contains("warning"), "{stderr}");
     assert_eq!(lab.calls().await, 4);
+    // 打分的 meta:評審呼叫花了時間,結束時間比開始晚。
+    let score_meta: Value = serde_json::from_str(
+        &std::fs::read_to_string(run.join("scores/default.meta.json")).unwrap(),
+    )
+    .unwrap();
+    assert_finished_after_started(&score_meta);
 
     // 評審跟被評的是同一個模型:警告(自我偏好)。
     let out = lab

@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
         options,
         &Fake,
         None,
-        Timestamp::now(),
+        Timestamp::now,
     )
     .await?;
     let (b, _) = run::start(
@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
         options,
         &Fake,
         None,
-        Timestamp::now(),
+        Timestamp::now,
     )
     .await?;
 
@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
         skip_on_check_failure: true,
     };
     for dir in [&a, &b] {
-        score::score(dir.path(), &setup, options, Timestamp::now()).await?;
+        score::score(dir.path(), &setup, options, Timestamp::now).await?;
     }
 
     // 3. 比較:依案例配對,算兩個指標與 bootstrap 信賴區間。

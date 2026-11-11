@@ -226,11 +226,14 @@ pub fn estimate(
 }
 
 /// 打分。同一個名字已經有打分時接續:只評還沒評的(或回應已經更新的)。
+///
+/// `clock`:讀目前時間的函式(同 `run::start`)。第一次打分時讀一次當 `started_at`,做完再讀一次當 `finished_at`;
+/// 接續時 `started_at` 保留第一次的(不讀時鐘),只換 `finished_at`。
 pub async fn score(
     run_dir: &Path,
     setup: &ScoreSetup<'_>,
     options: ExecOptions,
-    now: Timestamp,
+    clock: impl Fn() -> Timestamp,
 ) -> Result<ScoreReport, ScoreError> {
     // 沒辦法遵守預算就不開始(fail-closed)。只做確定性檢查時不花錢,不需要價格。
     if setup.judge.is_some() && options.budget_usd.is_some() && options.price.is_none() {
@@ -241,7 +244,7 @@ pub async fn score(
     // 先寫 meta 再寫任何一行:中途當掉的話,接續時才有設定可以比對。開始時間保留第一次打分的。
     let mut meta = p.existing.clone().unwrap_or_else(|| ScoreMeta {
         eval_version: env!("CARGO_PKG_VERSION").into(),
-        started_at: now,
+        started_at: clock(),
         finished_at: None,
         config: p.config.clone(),
         summary: None,
@@ -266,7 +269,8 @@ pub async fn score(
     let all: Vec<ScoreLine> = p.files.read_lines()?;
     let summary = summarize(&p.responses, &p.latest, &all);
     let warnings = self_preference(&p, setup, &summary).into_iter().collect();
-    meta.finished_at = Some(now);
+    // 做完才讀:這時候的時間才是「結束」。
+    meta.finished_at = Some(clock());
     meta.summary = Some(summary.clone());
     p.files.write_meta(&meta)?;
     Ok(ScoreReport { summary, warnings })

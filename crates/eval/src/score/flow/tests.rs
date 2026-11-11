@@ -13,6 +13,7 @@ use llm::{
 
 use super::*;
 use crate::store::DatasetInfo;
+use crate::test_clock::{fixed, minutes_per_call};
 
 /// 假的評審。看 prompt 決定怎麼回:回答裡有 `BAD` → 每條都不通過;有 `HANG` → 永遠不回;其他 → 每條都通過。
 /// 每次用掉 1000 個輸入、100 個輸出、300 個讀快取、50 個寫快取 token。
@@ -289,7 +290,7 @@ async fn checks_only_scoring_writes_one_line_per_response_and_a_meta() {
         &s.run,
         &setup_with("checks", None),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -356,6 +357,7 @@ async fn checks_only_scoring_writes_one_line_per_response_and_a_meta() {
     assert_eq!(meta.summary, Some(expected));
     assert_eq!(meta.config.judge, None);
     assert!(meta.config.skip_on_check_failure);
+    // 固定的時鐘:開始與結束讀到同一個值。時間會前進的情況見 `the_end_time_is_read_after_scoring…`。
     assert_eq!(meta.finished_at, Some(t("2026-11-02T00:00:00Z")));
     assert_eq!(meta.started_at, t("2026-11-02T00:00:00Z"));
 }
@@ -377,7 +379,7 @@ async fn the_judge_grades_the_rubric_after_the_checks() {
         &s.run,
         &setup_with("j", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -461,7 +463,7 @@ async fn a_failed_check_skips_the_judge_unless_told_to_judge_all() {
         &s.run,
         &setup_with("skip", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -485,7 +487,7 @@ async fn a_failed_check_skips_the_judge_unless_told_to_judge_all() {
         skip_on_check_failure: false,
         ..setup_with("all", Some(&j))
     };
-    score(&s.run, &all, options(), t("2026-11-02T00:00:00Z"))
+    score(&s.run, &all, options(), fixed("2026-11-02T00:00:00Z"))
         .await
         .unwrap();
     assert_eq!(fake.calls(), 2);
@@ -521,7 +523,7 @@ async fn a_rubric_without_a_judge_is_refused_before_anything_is_written() {
         &s.run,
         &setup_with("checks", None),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap_err();
@@ -545,7 +547,7 @@ async fn judging_your_own_answers_is_warned_about() {
                 &run,
                 &setup_with(name, Some(&j)),
                 options(),
-                t("2026-11-02T00:00:00Z"),
+                fixed("2026-11-02T00:00:00Z"),
             )
             .await
             .unwrap()
@@ -600,7 +602,7 @@ async fn the_budget_stops_new_judge_calls_and_the_same_name_finishes_the_rest() 
         &s.run,
         &setup_with("j", Some(&j)),
         tight,
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -621,7 +623,7 @@ async fn the_budget_stops_new_judge_calls_and_the_same_name_finishes_the_rest() 
         &s.run,
         &setup_with("j", Some(&j)),
         tight,
-        t("2026-11-02T01:00:00Z"),
+        fixed("2026-11-02T01:00:00Z"),
     )
     .await
     .unwrap();
@@ -632,7 +634,7 @@ async fn the_budget_stops_new_judge_calls_and_the_same_name_finishes_the_rest() 
         &s.run,
         &setup_with("j", Some(&j)),
         options(),
-        t("2026-11-02T02:00:00Z"),
+        fixed("2026-11-02T02:00:00Z"),
     )
     .await
     .unwrap();
@@ -655,6 +657,47 @@ async fn the_budget_stops_new_judge_calls_and_the_same_name_finishes_the_rest() 
 }
 
 #[tokio::test(start_paused = true)]
+async fn the_end_time_is_read_after_scoring_and_a_later_pass_keeps_the_first_start_time() {
+    let answers = [
+        ("a", 0, Some("x")),
+        ("a", 1, Some("x")),
+        ("a", 2, Some("x")),
+    ];
+    let s = setup(&[case_line("a", &["r1"])], &answers);
+    let fake = FakeJudge::new("judge-id");
+    let j = judge(&fake, "default");
+    // 一次一個,預算只夠 1 次評審。
+    let tight = ExecOptions {
+        concurrency: 1,
+        budget_usd: Some(PER_JUDGE_CALL / 2.0),
+        ..options()
+    };
+
+    // 時間跟著「評審被呼叫幾次」走:開始時 0 次 → 00:00,做完 1 次 → 00:01。
+    // 如果結束時間在工作開始前就讀了,會是 00:00,跟 `started_at` 一樣。
+    let clock = minutes_per_call("2026-11-02T00:00:00Z", || fake.calls());
+    score(&s.run, &setup_with("j", Some(&j)), tight, clock)
+        .await
+        .unwrap();
+    assert_eq!(fake.calls(), 1);
+    let first = score_meta(&s.run, "j").unwrap();
+    assert_eq!(first.started_at, t("2026-11-02T00:00:00Z"));
+    assert_eq!(first.finished_at, Some(t("2026-11-02T00:01:00Z")));
+
+    // 隔了一陣子補完:時鐘從 06:00 開始,只算這次新增的 2 次評審。
+    let before = fake.calls();
+    let clock = minutes_per_call("2026-11-02T06:00:00Z", || fake.calls() - before);
+    score(&s.run, &setup_with("j", Some(&j)), options(), clock)
+        .await
+        .unwrap();
+    assert_eq!(fake.calls(), 3);
+    let second = score_meta(&s.run, "j").unwrap();
+    // 開始時間還是第一次的 00:00(不是這次的 06:00);結束時間是這次做完的 06:02。
+    assert_eq!(second.started_at, t("2026-11-02T00:00:00Z"));
+    assert_eq!(second.finished_at, Some(t("2026-11-02T06:02:00Z")));
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_budget_without_a_judge_price_is_refused() {
     let s = setup(&[case_line("a", &["r1"])], &[("a", 0, Some("x"))]);
     let fake = FakeJudge::new("judge-id");
@@ -669,7 +712,7 @@ async fn a_budget_without_a_judge_price_is_refused() {
         &s.run,
         &setup_with("j", Some(&j)),
         no_price,
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap_err();
@@ -683,7 +726,7 @@ async fn a_budget_without_a_judge_price_is_refused() {
         &s.run,
         &setup_with("c", None),
         no_price,
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -698,7 +741,7 @@ async fn the_same_name_with_different_settings_is_refused() {
         &s.run,
         &setup_with("j", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -712,7 +755,7 @@ async fn the_same_name_with_different_settings_is_refused() {
             ..setup_with("j", Some(&other))
         },
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap_err();
@@ -742,7 +785,7 @@ async fn a_changed_rubric_can_be_scored_under_a_new_name_but_a_changed_question_
         &s.run,
         &setup_with("v1", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -754,7 +797,7 @@ async fn a_changed_rubric_can_be_scored_under_a_new_name_but_a_changed_question_
         &s.run,
         &setup_with("v1", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap_err();
@@ -767,7 +810,7 @@ async fn a_changed_rubric_can_be_scored_under_a_new_name_but_a_changed_question_
         &s.run,
         &setup_with("v2", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -786,7 +829,7 @@ async fn a_changed_rubric_can_be_scored_under_a_new_name_but_a_changed_question_
         &s.run,
         &setup_with("v3", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap_err();
@@ -809,7 +852,7 @@ async fn a_case_removed_from_the_dataset_is_refused() {
         &s.run,
         &setup_with("c", None),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap_err();
@@ -829,7 +872,7 @@ async fn a_newer_response_for_the_same_sample_is_scored_again() {
         &s.run,
         &setup_with("c", None),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -844,7 +887,7 @@ async fn a_newer_response_for_the_same_sample_is_scored_again() {
         &s.run,
         &setup_with("c", None),
         options(),
-        t("2026-11-02T01:00:00Z"),
+        fixed("2026-11-02T01:00:00Z"),
     )
     .await
     .unwrap();
@@ -883,7 +926,7 @@ async fn a_judge_that_never_answers_times_out_into_error_verdicts() {
             &s.run,
             &setup_with("j", Some(&j)),
             options(),
-            t("2026-11-02T00:00:00Z"),
+            fixed("2026-11-02T00:00:00Z"),
         ),
     )
     .await
@@ -924,7 +967,7 @@ async fn judging_runs_concurrently_up_to_the_limit() {
         &s.run,
         &setup_with("j", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -939,7 +982,7 @@ async fn judging_runs_concurrently_up_to_the_limit() {
         &s.run,
         &setup_with("serial", Some(&j)),
         serial,
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -1005,7 +1048,7 @@ async fn a_stale_score_counts_as_missing_until_it_is_redone() {
         &s.run,
         &setup_with("j", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -1025,7 +1068,7 @@ async fn a_stale_score_counts_as_missing_until_it_is_redone() {
         &s.run,
         &setup_with("j", Some(&j)),
         spent_out,
-        t("2026-11-02T01:00:00Z"),
+        fixed("2026-11-02T01:00:00Z"),
     )
     .await
     .unwrap();
@@ -1056,7 +1099,7 @@ async fn the_cost_is_unknown_when_the_judge_has_no_price() {
         &s.run,
         &setup_with("j", Some(&j)),
         no_price,
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();
@@ -1104,7 +1147,7 @@ async fn criteria_that_were_not_judged_are_recorded_as_skipped() {
         &s.run,
         &setup_with("j", Some(&j)),
         options(),
-        t("2026-11-02T00:00:00Z"),
+        fixed("2026-11-02T00:00:00Z"),
     )
     .await
     .unwrap();

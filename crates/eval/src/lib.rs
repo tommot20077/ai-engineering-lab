@@ -13,6 +13,8 @@ pub mod run;
 pub mod score;
 pub mod stats;
 pub mod store;
+#[cfg(test)]
+mod test_clock;
 
 pub use case::{Case, ChatInput, Check, Input, Output};
 pub use dataset::{Dataset, DatasetError};

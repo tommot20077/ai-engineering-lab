@@ -144,7 +144,7 @@ async fn run_command(settings: &Settings, args: &RunArgs) -> Result<()> {
         options,
         provider.as_ref(),
         git_commit(),
-        Timestamp::now(),
+        Timestamp::now,
     )
     .await?;
     print_run(dir.path(), &summary);
@@ -181,7 +181,7 @@ async fn resume_command(settings: &Settings, dir: &Path, args: &RunArgs) -> Resu
         options,
         args.retry_errors,
         provider.as_ref(),
-        Timestamp::now(),
+        Timestamp::now,
     )
     .await?;
     print_run(dir, &summary);
@@ -222,7 +222,7 @@ async fn score_command(settings: &Settings, args: &ScoreArgs) -> Result<()> {
         return Ok(());
     }
     let options = exec_options(settings, args.concurrency, args.budget, price);
-    let report = score::score(&args.run, &setup, options, Timestamp::now()).await?;
+    let report = score::score(&args.run, &setup, options, Timestamp::now).await?;
     for warning in &report.warnings {
         eprintln!("warning: {warning}");
     }
