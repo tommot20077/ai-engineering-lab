@@ -158,6 +158,20 @@ self-preference (catch rate on own answers vs others'):
 agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
 ```
 
+### 指標的細節(第 3 步實作時定下,`calibration/metrics.rs`)
+
+- `Tally` 從(標籤, 判決)的配對 `collect()` 出來;依種類、來源模型分組時,先篩選配對再算。
+- 評審的 `Error`(以及校準時不應該出現的 `Skipped`)在兩個比例的分母裡都算,分子都不算:
+  落在標成 `fail` 的標準上 = 沒抓到(fail-closed);落在標成 `pass` 的標準上 = 沒有冤枉,所以出錯會讓冤枉率看起來偏低。
+  出錯數另外列在報告上,不為 0 時兩個數字要一起看。
+- `injection` 的「被騙」= 標成 `fail` 卻判 `pass`(`Tally::passed_through`),不含出錯。
+- 一致率只算兩個評審都給出判決的標準。
+- 沒有樣本(分母 0)時比例是 `None`:沒有證據,不是 0% 也不是 100%。
+- Wilson 區間的 z 等於 Python `NormalDist().inv_cdf(0.975)`;已知答案由獨立的 Python 實作算出(z 現場算,不抄常數)。
+- 浮點誤差:0/5 的下界算成 2.8e-17(比觀察到的比例 0 還大)、92/92 的上界算成 1.0000000000000002。
+  Wilson 區間一定包含觀察到的比例,所以下界夾在 [0, 比例]、上界夾在 [比例, 1]。
+  已知答案的表(0/92、0/1 剛好算出精確的 0)沒抓到;掃過 n = 1..199 的性質測試才抓到。
+
 ## 5. 三個評審
 
 - `eval.toml` 加別名 `strong = "claude-opus-5-5"`(價格 $4 / $20);`default`(Sonnet)、`cheap`(Haiku)已有。
@@ -189,7 +203,7 @@ agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
 |---|---|---|
 | 1 | `rust-intermediate` 資料集 + 資料集測試(標準答案每次都跟 rustc 比對)**(完成)** | `std::process::Command`、`std::thread::scope`、`find_map` |
 | 2 | 校準集的型別與讀檔檢查(`calibration.rs`)**(完成)** | parse, don't validate(`RawItem` → `Item`)、serde 的 `Visitor`、跨檔案的一致性檢查 |
-| 3 | 指標:抓錯率、冤枉率、Wilson 區間、一致率(純函式,已知答案用獨立的 Python 實作算) | 純函式、浮點數的邊界 |
+| 3 | 指標:抓錯率、冤枉率、Wilson 區間、一致率(純函式,已知答案用獨立的 Python 實作算)**(完成)** | `FromIterator`(自己的型別也能 `collect()`)、浮點數的邊界 |
 | 4 | `eval calibrate` 指令 + 報告(insta snapshot)+ E2E(wiremock 的假評審) | 重用 `Scorer`、clap 的重複參數 |
 | 5 | `evals/calibration/rust-basics.jsonl`(約 40 筆,§3) | — (資料) |
 | 6 | 真的跑(§5),結果寫進 README;更新 retro | — |

@@ -316,5 +316,7 @@ where
     deserializer.deserialize_map(Entries)
 }
 
+pub mod metrics;
+
 #[cfg(test)]
 mod tests;
