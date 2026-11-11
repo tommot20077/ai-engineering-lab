@@ -50,8 +50,7 @@
   執行費用差 20 倍、連評審一起算只差 2.3 倍(評審是固定成本);延遲 p50 2.9 秒對 5.1 秒。整個實驗花 $0.177。
   細節與解讀見 `crates/eval/README.md`「第一次真的比較」。
 - **下一步**:002 第二部分 — 有鑑別力的資料集與評審校準(使用者 2026-11-11 決定先做這個,再進 003)。
-  設計草稿 `docs/modules/002-eval-harness/design-part2.md`,**待使用者確認 §8 的四個問題**,確認後編號 D-038 起再實作。
-  已定:錯的回答用「拿真實回答改一句」(做法 C)、新子命令 `eval calibrate`、Sonnet / Opus / Haiku 三個評審都跑。
+  設計 `docs/modules/002-eval-harness/design-part2.md` 已定案(D-038~D-040);實作順序見該文件 §7,**目前在第 1 步(`rust-intermediate` 資料集)**。
   第 0 步(人工複核第一次比較的 24 個回答)已完成:72 個評審判決全部正確,細節用 rustc 驗證屬實 → 全過是因為題目太簡單,不是評審放水;
   但那些回答沒有錯可以抓,評審的抓錯率仍未知。之後才是 003 Agent runtime + Tool calling + MCP。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
@@ -100,6 +99,9 @@
 | D-035 | eval 借鏡 Harness²:並列全部通過率與部分得分;A/A 雜訊底線;打分設定不一致預設拒絕比較(`--allow-mismatch` 例外);`--resume` 接續;`--dry-run` / `--tags` / `--limit`;dev / test 切分(資料集約 60 題以上再做) | 比較要敏感也要誠實;`--budget` 會留下不完整的執行,接續才不白付錢;反覆調整會對資料集 overfit | 2026-11-01 |
 | D-036 | cargo-mutants 不在本機跑:每次 push 由 `.github/workflows/mutants-diff.yml` 用 `--in-diff` 只對改到的程式行跑(只回報、有漏掉時出 warning),結果在 lab-step 第 6 節等 CI 時看,漏掉的在下一個 commit 補;本機只留手寫的 `scripts/mutate.py`;每週全 workspace 排程不變。fmt、clippy、測試仍在本機跑。**所有分支都觸發**(CI 也是):分支用 `merge-base origin/main` 累積比較、連續 push 時取消舊的 run;main 用 push 之前的 commit 比較、不取消 | 實測 SSD 寫入:對 gateway 跑一次 cargo-mutants 約 15 GB(106 秒),`scripts/check.sh` 約 0.1~0.6 GB;mutants 佔 Rust 寫入量九成以上。全部搬上 CI 會讓 TDD 每輪等好幾分鐘,而且 rust-analyzer 本來就在本機編譯。代價:mutation 的回饋從 commit 前變成 push 後。所有分支都觸發,是因為 session 預設開 worktree、在分支上工作,只認 main 時分支上完全沒有 CI;分支累積比較,取消舊的 run 也不會漏 | 2026-11-09 |
 | D-037 | 支援在 Claude Code 雲端開發:repo 的 `.claude/settings.json` 加 SessionStart hook(自動跑 `install-hooks.sh`)與 PreToolUse hook(`scripts/guard-env.sh` 擋下印出環境變數的指令);私有資料掃描在沒有 `.private-patterns` 時改讀環境變數 `PRIVATE_PATTERNS`,雲端兩者都沒有時拒絕 commit,規則不是合法的 regex 時也拒絕;兩道護欄由 `scripts/test-guards.sh` 測試,check.sh 與 CI 都跑。`ANTHROPIC_API_KEY` 在雲端只能放成環境變數(官方文件:network secret 不會附加到 api.anthropic.com),要用專用、有花費上限的 key | 雲端是重新 clone,gitignore 的檔案都不在:不處理的話,掃描只擋 API key、私有名稱會直接進公開 repo(寫入路徑要 fail-loud);環境變數在 session 裡讀得到,要有機制擋住意外印出 | 2026-11-09 |
+| D-038 | eval 新資料集 `rust-intermediate`(`rust-basics` 不動);約 6 成是標準答案由 rustc 決定的題目(編譯錯誤、預測輸出、能不能編譯),寫題時實際編譯或執行確認;依設計的難度寫題,不依結果篩題(試跑只修題意不清或答案錯的題,正式比較重新跑) | 第一次比較兩邊全過、量不出差別;有標準答案的題目便宜、穩定、不受評審影響,也是階段 3 RL 要的可驗證任務;依結果篩題會高估差距 | 2026-11-11 |
+| D-039 | 評審校準:校準集用「拿已確認正確的真實回答改一句,讓它違反一條評分標準」做成,另放沒改的當對照;標籤以評分標準的全文為 key;新子命令 `eval calibrate` 直接重用 `Judge`,報抓錯率、冤枉率、被 injection 騙的比例(Wilson 95% 區間);不做接續;這次只報數字、不設門檻 | 第 0 步證明了評審沒放水,但回答裡沒有錯可抓,抓錯率仍未知;改一句讓標籤確定、風格跟真實回答一樣(mutation testing 的做法);標準改了字就對不上、讀檔時拒絕 | 2026-11-11 |
+| D-040 | 評審比較 Sonnet 5.5、Opus 5.5(別名 `strong`)、Haiku 5.5,同一個 effort;回答裡程式碼的 `compiles` 檢查等 003 的沙箱再做 | 換評審結論會不會變,要有資料;對不可信的輸出跑 compiler 需要隔離環境,003 的工具沙箱本來就要做 | 2026-11-11 |
 
 ## 模組
 
