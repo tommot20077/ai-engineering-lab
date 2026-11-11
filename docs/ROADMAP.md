@@ -50,7 +50,7 @@
   執行費用差 20 倍、連評審一起算只差 2.3 倍(評審是固定成本);延遲 p50 2.9 秒對 5.1 秒。整個實驗花 $0.177。
   細節與解讀見 `crates/eval/README.md`「第一次真的比較」。
 - **下一步**:002 第二部分 — 有鑑別力的資料集與評審校準(使用者 2026-11-11 決定先做這個,再進 003)。
-  設計 `docs/modules/002-eval-harness/design-part2.md` 已定案(D-038~D-040);實作順序見該文件 §7,**目前在第 1 步(`rust-intermediate` 資料集)**。
+  設計 `docs/modules/002-eval-harness/design-part2.md` 已定案(D-038~D-040);實作順序見該文件 §7。第 1 步完成:`evals/rust-intermediate.jsonl`(31 題,19 題的標準答案每次測試都跟 rustc 比對)。**下一步:第 2 步,校準集的型別與讀檔檢查(`calibration.rs`)**。
   第 0 步(人工複核第一次比較的 24 個回答)已完成:72 個評審判決全部正確,細節用 rustc 驗證屬實 → 全過是因為題目太簡單,不是評審放水;
   但那些回答沒有錯可以抓,評審的抓錯率仍未知。之後才是 003 Agent runtime + Tool calling + MCP。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。

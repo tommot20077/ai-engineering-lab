@@ -48,6 +48,20 @@
 - **開放式題目的評分標準要能抓到常見的錯**,不只列教科書的重點。例如「說明 `'a` 不會延長值的壽命」,
   而不只是「說明 `'a` 是什麼」。
 
+### 實作時定下的(第 1 步)
+
+- 31 題:`compile-error` 8、`output` 8、`compiles` 3、`open` 12(其中 7 題同時有確定性檢查)。`max_tokens` 8192(thinking 也算在內)。
+- 「答案由 compiler 決定」寫成測試(`tests/datasets.rs`),不是只在寫題時做一次:
+  - `rust_intermediate_answers_match_the_compiler`:每次測試都用 rustc 編譯(必要時執行)題目裡的程式,跟參考答案的最後一行比對;
+    19 題平行編譯,約 0.5 秒。
+  - `the_compiler_check_rejects_a_wrong_answer`:比對邏輯本身的負對照。少了它,「把實際的錯誤代碼換成參考答案」的 mutant 抓不到。
+  - `every_reference_answer_passes_its_own_checks`:regex 寫壞了,連正確答案都會被判錯。
+  - `the_last_line_check_accepts_formatting_but_not_other_answers`:容錯的範圍(見 crate README)。
+    mutation 找到一個缺口:拿掉「答案要在行首」,「不是 E0716」也會被判對;已補上這種輸入。
+- 寫題時發現:if-let 那題原本是 `main` 的最後一個運算式,在 edition 2021 碰到的是「尾端運算式的暫時值範圍」(`E0597`),
+  不是想考的 `if let` 規則;改成不在尾端,2021 才會在執行期 panic、2024 正常印出。這種題目要兩個 edition 都驗證。
+- 目前的借用檢查器仍然拒絕「先 `get`、沒有就 `insert`」(`comp-get-or-insert`,`E0502`);Polonius 穩定之後這題的答案會變,上面的測試會提醒。
+
 ## 3. 校準集
 
 用來量評審:故意改壞的回答,評審有沒有判成不通過;沒改過的,評審有沒有冤枉。
@@ -164,7 +178,7 @@ agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
 
 | # | 內容 | 主要 Rust 概念 |
 |---|---|---|
-| 1 | `rust-intermediate` 資料集(寫題時用 rustc 驗證每一個標準答案)+ 資料集測試 | — (資料) |
+| 1 | `rust-intermediate` 資料集 + 資料集測試(標準答案每次都跟 rustc 比對)**(完成)** | `std::process::Command`、`std::thread::scope`、`find_map` |
 | 2 | 校準集的型別與讀檔檢查(`calibration.rs`) | `HashMap` 當 key-value 標籤、跨檔案的一致性檢查 |
 | 3 | 指標:抓錯率、冤枉率、Wilson 區間、一致率(純函式,已知答案用獨立的 Python 實作算) | 純函式、浮點數的邊界 |
 | 4 | `eval calibrate` 指令 + 報告(insta snapshot)+ E2E(wiremock 的假評審) | 重用 `Scorer`、clap 的重複參數 |

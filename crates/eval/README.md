@@ -82,10 +82,19 @@ cargo run -p eval --release -- compare <執行目錄 A> <執行目錄 B>
 
 | | 位置 | 進 git? | 用途 |
 |---|---|---|---|
-| 公開 | repo 的 [`evals/`](../../evals/) | 是 | `smoke`(CI 用,只有確定性檢查)、`rust-basics`(12 題手寫的 Rust 問答) |
+| 公開 | repo 的 [`evals/`](../../evals/) | 是 | `smoke`(CI 用,只有確定性檢查)、`rust-basics`(12 題基礎 Rust 問答)、`rust-intermediate`(31 題:19 題的標準答案由 rustc 決定,12 題開放式) |
 | 私有 | `<資料目錄>/eval/datasets/`(700 / 600) | 否 | 真實對話(`eval add` 從呼叫紀錄加),只有自己讀得到 |
 
 `--dataset rust-basics` 先找私有的、再找公開的;兩邊同名就拒絕。也可以直接給 `.jsonl` 的路徑。
+
+`rust-intermediate`(D-038)是為了分出模型高下而寫的:`rust-basics` 兩個模型都全過,量不出差別。
+
+- 題型(第一個 tag):`compile-error`(會報哪個錯誤代碼)、`output`(印出什麼)、`compiles`(能不能編譯)、`open`(開放式,評審打分)。
+  可以用 `--tags compile-error,output` 只跑其中幾種。
+- 前三種的答案寫在參考答案的最後一行,由 rustc(`rust-toolchain.toml` 鎖定的版本、edition 2024)決定:
+  `tests/datasets.rs` 每次都真的編譯、執行題目裡的程式比對,toolchain 升級後答案變了會失敗。
+- 確定性檢查只看回答的最後一行:容許 `答案:` 前綴、粗體、反引號、句號,以及答案包在程式碼區塊裡;
+  答案不同、答案前面還有字(例如「不是 E0716」)、答案後面還有一行說明,都算錯。
 
 ## 打分
 
@@ -194,7 +203,7 @@ cargo run -p eval --example offline         # 完整流程的示範
 | 層 | 在哪裡 | 測什麼 |
 |---|---|---|
 | 單元 | `src/**/tests.rs` | 每個模組的規則:資料集檢查、打分、統計(含獨立 Python 實作算出的已知答案)、報告(insta snapshot)、設定、命令列 |
-| 資料集 | `tests/datasets.rs` | `evals/` 裡的每個公開資料集都讀得進來 |
+| 資料集 | `tests/datasets.rs` | `evals/` 裡的每個公開資料集都讀得進來;參考答案通過自己的檢查;`rust-intermediate` 的標準答案跟 rustc 一致(每次都真的編譯、執行) |
 | E2E | `tests/e2e.rs` | 真的執行 eval 程式,上游是 wiremock:`run` → `score` → `compare`、雜訊底線、評審與自我偏好警告、預算與接續、`add` |
 
 每次 push,CI 會用 cargo-mutants 對改到的程式行做 mutation testing(D-036)。

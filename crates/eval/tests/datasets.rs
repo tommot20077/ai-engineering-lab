@@ -1,36 +1,294 @@
 //! 公開資料集(repo 的 `evals/`)一定要讀得進來:手寫的檔案改壞了,要在 CI 抓到,而不是等到花錢跑模型時才發現。
+//!
+//! 資料也要測試(D-038):
+//! - 參考答案要通過自己的確定性檢查:regex 寫壞了,連正確答案都會被判錯,所有模型都會失敗。
+//! - 有標準答案的題目,答案由 compiler 決定:每次測試都真的編譯、執行題目裡的程式,跟參考答案比對。
+//!   toolchain 鎖在 `rust-toolchain.toml`,本機、CI 結果一樣;哪天升級後答案變了,這裡會失敗。
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use eval::Dataset;
+use eval::score::{Checks, Scorer, VerdictResult};
+use eval::{Case, Dataset, Input, Output};
+use llm::Content;
+use serde_json::json;
 
-#[test]
-fn every_public_dataset_is_valid() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evals");
-    let mut names = Vec::new();
-    for entry in std::fs::read_dir(&dir).unwrap() {
+fn evals_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evals")
+}
+
+fn public_datasets() -> Vec<Dataset> {
+    let mut datasets = Vec::new();
+    for entry in std::fs::read_dir(evals_dir()).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|e| e == "jsonl") {
             // `Dataset::load` 會一次列出全部的問題(重複 id、未知欄位、沒有檢查也沒有評分標準……)。
-            let ds = Dataset::load(&path).unwrap_or_else(|e| panic!("{e}"));
-            assert!(!ds.cases.is_empty(), "{} is empty", path.display());
-            names.push(ds.name);
+            datasets.push(Dataset::load(&path).unwrap_or_else(|e| panic!("{e}")));
         }
     }
-    names.sort();
-    assert_eq!(names, ["rust-basics", "smoke"]);
+    datasets.sort_by(|a, b| a.name.cmp(&b.name));
+    datasets
+}
+
+fn load(name: &str) -> Dataset {
+    Dataset::load(&evals_dir().join(format!("{name}.jsonl"))).unwrap()
+}
+
+#[test]
+fn every_public_dataset_is_valid() {
+    let datasets = public_datasets();
+    for ds in &datasets {
+        assert!(!ds.cases.is_empty(), "{} is empty", ds.name);
+    }
+    let names: Vec<_> = datasets.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["rust-basics", "rust-intermediate", "smoke"]);
 }
 
 #[test]
 fn the_smoke_dataset_needs_no_judge() {
     // CI 的 E2E 用 `eval score --no-judge` 打分:smoke 不能有評分標準(否則會被拒絕)。
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evals/smoke.jsonl");
-    let ds = Dataset::load(&path).unwrap();
+    let ds = load("smoke");
     assert!(
         ds.cases
             .iter()
             .all(|c| c.rubric.is_empty() && !c.checks.is_empty())
     );
+}
+
+/// 把一段文字包成「模型的回答」,交給打分器。
+fn answer(text: &str) -> Output {
+    // 用 JSON 建構,跟 `responses.jsonl` 裡存的格式一樣,不必在測試裡寫出 `llm::Response` 的每個欄位。
+    serde_json::from_value(json!({
+        "type": "chat", "model": "reference",
+        "content": [{"type": "text", "text": text}],
+        "stop": {"kind": "end_turn", "raw": "end_turn"},
+        "usage": {"input_tokens": 0, "output_tokens": 0}
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn every_reference_answer_passes_its_own_checks() {
+    let mut problems = Vec::new();
+    for ds in public_datasets() {
+        for case in &ds.cases {
+            let Some(reference) = &case.reference else {
+                continue;
+            };
+            let scored = Checks.score(case, &answer(reference)).await;
+            for v in scored.verdicts {
+                if v.result != VerdictResult::Pass {
+                    problems.push(format!(
+                        "{}/{}: {} -> {:?}",
+                        ds.name, case.id, v.criterion, v.result
+                    ));
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+
+    // 上面只檢查「有參考答案」的題目:少了參考答案,這個測試就默默跳過那一題。
+    // rust-intermediate 每一題有確定性檢查的,都要有參考答案。
+    let missing: Vec<_> = load("rust-intermediate")
+        .cases
+        .into_iter()
+        .filter(|c| !c.checks.is_empty() && c.reference.is_none())
+        .map(|c| c.id)
+        .collect();
+    assert!(missing.is_empty(), "no reference: {missing:?}");
+}
+
+/// 「最後一行只寫答案」的檢查:格式上的小差異要放過(不是在考排版),答案不同、或答案不在最後一行就不行。
+#[tokio::test]
+async fn the_last_line_check_accepts_formatting_but_not_other_answers() {
+    let ds = load("rust-intermediate");
+    let find = |id: &str| ds.cases.iter().find(|c| c.id == id).unwrap();
+    let code = find("ce-temporary"); // 答案 E0716
+    let output = find("out-utf8-len"); // 答案 6 5 Some((3, 'l')),含 regex 的特殊字元
+    let cases = [
+        (code, "理由。\nE0716", true),
+        (code, "理由。\n**E0716**", true),
+        (code, "理由。\n`E0716`", true),
+        (code, "理由。\n答案:E0716", true),
+        (code, "理由。\nE0716。\n", true),
+        (code, "理由。\n```\nE0716\n```", true),
+        (code, "E0716 是常見的誤解,其實是\nE0597", false),
+        (code, "理由。\nE0716 或 E0597", false),
+        (code, "E0716\n以上是答案,補充一句說明。", false),
+        (code, "理由。\nE07160", false),
+        (code, "理由。\n不是 E0716", false),
+        (code, "理由。\nE0597 而不是 E0716", false),
+        (output, "理由。\n6 5 Some((3, 'l'))", true),
+        (output, "理由。\n`6 5 Some((3, 'l'))`", true),
+        (output, "理由。\n6 5 Some((3,'l'))", false),
+        (output, "理由。\n6 5 Some(3, 'l')", false),
+    ];
+    for (case, text, should_pass) in cases {
+        let scored = Checks.score(case, &answer(text)).await;
+        let passed = scored
+            .verdicts
+            .iter()
+            .all(|v| v.result == VerdictResult::Pass);
+        assert_eq!(passed, should_pass, "{}: {text:?}", case.id);
+    }
+}
+
+/// 有標準答案的三種題型(tag 的第一個),答案寫在參考答案的最後一行。
+#[derive(Clone, Copy, Debug)]
+enum Kind {
+    /// 編譯會失敗,答案是唯一的錯誤代碼。
+    CompileError,
+    /// 編譯並執行,答案是標準輸出(去掉行尾的空白)。
+    Output,
+    /// 答案是「可以」或「不行」。
+    Compiles,
+}
+
+fn kind_of(case: &Case) -> Option<Kind> {
+    match case.tags.first().map(String::as_str) {
+        Some("compile-error") => Some(Kind::CompileError),
+        Some("output") => Some(Kind::Output),
+        Some("compiles") => Some(Kind::Compiles),
+        _ => None,
+    }
+}
+
+/// 題目文字裡的第一個 ```rust 區塊。
+fn program(case: &Case) -> &str {
+    let Input::Chat(chat) = &case.input;
+    // `find_map`:找到第一個符合的就停,同時把 `Content::Text` 裡的字串取出來。
+    // Java 對照:`.filter(c -> c instanceof Text).map(...).findFirst()`。
+    let text = chat
+        .messages
+        .iter()
+        .flat_map(|m| &m.content)
+        .find_map(|c| match c {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap();
+    let start = text.find("```rust\n").expect("no ```rust block") + "```rust\n".len();
+    let len = text.get(start..).unwrap().find("\n```").unwrap();
+    text.get(start..start + len).unwrap()
+}
+
+/// 編譯(必要時執行)題目的程式,比對參考答案的最後一行。不一致時回傳說明。
+fn check_against_compiler(case: &Case, kind: Kind, dir: &Path) -> Result<(), String> {
+    let expected = case
+        .reference
+        .as_deref()
+        .unwrap()
+        .lines()
+        .last()
+        .unwrap()
+        .trim();
+    let src = dir.join(format!("{}.rs", case.id));
+    let exe = dir.join(&case.id);
+    std::fs::write(&src, program(case)).unwrap();
+    // 在 crate 目錄執行,rustup 才會讀到 repo 的 rust-toolchain.toml,用鎖定的那一版。
+    let build = Command::new("rustc")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["--edition", "2024", "--crate-name", "q", "-o"])
+        .arg(&exe)
+        .arg(&src)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    let actual = match kind {
+        Kind::CompileError => {
+            let re = regex::Regex::new(r"(?m)^error\[(E\d{4})\]").unwrap();
+            let mut codes: Vec<_> = re
+                .captures_iter(&stderr)
+                .map(|c| c.get(1).unwrap().as_str().to_owned())
+                .collect();
+            codes.sort();
+            codes.dedup();
+            codes.join(",")
+        }
+        Kind::Output if build.status.success() => {
+            let run = Command::new(&exe).output().unwrap();
+            if !run.status.success() {
+                return Err(format!("{}: the program failed: {:?}", case.id, run.status));
+            }
+            String::from_utf8_lossy(&run.stdout).trim_end().to_owned()
+        }
+        Kind::Output => return Err(format!("{}: does not compile:\n{stderr}", case.id)),
+        Kind::Compiles if build.status.success() => "可以".to_owned(),
+        Kind::Compiles => "不行".to_owned(),
+    };
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} ({kind:?}): the reference says {expected:?}, rustc says {actual:?}",
+            case.id
+        ))
+    }
+}
+
+/// 比對邏輯本身也要測(負對照):答案寫錯的題目一定要被抓到,答案對的一定要通過。
+/// 少了這個,把「rustc 實際的錯誤代碼」換成「參考答案」的實作,也會讓下一個測試通過(資料剛好全對)。
+#[test]
+fn the_compiler_check_rejects_a_wrong_answer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let case = |id: &str, tag: &str, program: &str, answer: &str| -> Case {
+        serde_json::from_value(json!({
+            "id": id, "tags": [tag],
+            "input": {"type": "chat", "max_tokens": 16, "messages": [{"role": "user", "content": [
+                {"type": "text", "text": format!("題目\n\n```rust\n{program}\n```\n")}]}]},
+            "reference": format!("理由\n\n{answer}")
+        }))
+        .unwrap()
+    };
+    let mismatch = "fn main() { let _x: i32 = \"a\"; }"; // rustc:E0308
+    let prints = "fn main() { print!(\"1 \"); }";
+    let fine = "fn main() {}";
+    let cases = [
+        (case("code-right", "compile-error", mismatch, "E0308"), true),
+        (
+            case("code-wrong", "compile-error", mismatch, "E0000"),
+            false,
+        ),
+        (case("code-compiles", "compile-error", fine, "E0308"), false),
+        (case("output-right", "output", prints, "1"), true),
+        (case("output-wrong", "output", prints, "2"), false),
+        (case("compiles-right", "compiles", fine, "可以"), true),
+        (case("compiles-wrong", "compiles", fine, "不行"), false),
+    ];
+    for (c, should_pass) in &cases {
+        let result = check_against_compiler(c, kind_of(c).unwrap(), tmp.path());
+        assert_eq!(result.is_ok(), *should_pass, "{}: {result:?}", c.id);
+    }
+}
+
+#[test]
+fn rust_intermediate_answers_match_the_compiler() {
+    let ds = load("rust-intermediate");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let todo: Vec<_> = ds
+        .cases
+        .iter()
+        .filter_map(|c| Some((c, kind_of(c)?)))
+        .collect();
+    // 少了這個,題型的 tag 打錯時,所有題目都被略過,測試照樣通過。
+    assert_eq!(todo.len(), 19, "cases with a compiler-checked answer");
+
+    // 每題各自編譯,互不相干,所以平行做(一題約半秒)。
+    // `thread::scope`:裡面開的執行緒保證在 scope 結束前跑完,所以可以直接借用 `dir`、`todo` 這些區域變數。
+    // Java 對照:`ExecutorService.invokeAll` 再等全部完成;但 Java 靠 GC 讓執行緒持有參考,Rust 要靠 scope 證明借用還有效。
+    let failures: Vec<String> = std::thread::scope(|s| {
+        let handles: Vec<_> = todo
+            .iter()
+            .map(|&(case, kind)| s.spawn(move || check_against_compiler(case, kind, dir)))
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|h| h.join().unwrap().err())
+            .collect()
+    });
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
