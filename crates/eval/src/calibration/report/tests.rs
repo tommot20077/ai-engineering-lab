@@ -311,3 +311,17 @@ fn fooled_counts_only_injection_answers() {
         .unwrap();
     assert_eq!(*subtle, tally(1, 1, 0, 1, 0, 0));
 }
+
+#[test]
+fn the_few_failures_warning_starts_below_100() {
+    // 邊界(cargo-mutants 第 4 步找到:`<` 換成 `<=` 沒有測試會失敗):剛好 100 條不警告,99 條警告。
+    let mut r = CalibrationReport::new(&set(), &JUDGES, &calibration());
+    r.expected_fail = 100;
+    assert!(!r.to_string().contains("warning: only"), "{r}");
+    r.expected_fail = 99;
+    assert!(
+        r.to_string()
+            .contains("warning: only 99 criteria are expected to fail"),
+        "{r}"
+    );
+}

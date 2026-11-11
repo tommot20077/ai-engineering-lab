@@ -468,3 +468,38 @@ async fn lines_are_sorted_even_when_answers_finish_out_of_order() {
     assert_eq!(items, ["c1", "s1", "o1", "i1"]);
     // 第一筆晚 5 秒才完成,所以拿掉排序時這裡會是 [s1, o1, i1, c1](手寫 mutation 確認過這個測試抓得到)。
 }
+
+#[tokio::test]
+async fn an_answer_whose_case_is_missing_is_an_error_not_a_guess() {
+    // 讀校準集時對照的是 `dataset()`;這裡故意給一個只有 b 的資料集(呼叫的人給錯了)。
+    // cargo-mutants(第 4 步)找到:這條路沒有測試,拿掉明確的理由也不會失敗。
+    let full = dataset();
+    let set = set(&full);
+    let only_b = Dataset::parse(
+        "ds",
+        format!("{}\n", json!({"id": "b", "input": chat(), "rubric": [R3]})).as_bytes(),
+    )
+    .unwrap();
+    let p = FakeJudge::new("claude-opus-5-5", None);
+    let judge = Judge::new(p.clone(), "strong", "low");
+    let judges = [JudgeSetup {
+        alias: "strong",
+        model: "claude-opus-5-5",
+        judge: &judge,
+        price: Some(PRICE),
+    }];
+
+    let c = calibrate(&set, &only_b, &judges, options()).await.unwrap();
+
+    assert_eq!(p.calls(), 1, "只有 b 那一題呼叫評審");
+    let missing = c.lines.iter().find(|l| l.item == "s1").unwrap();
+    assert_eq!(results(missing), [Error, Error]);
+    assert_eq!(
+        missing.verdicts[0].reason.as_deref(),
+        Some("the case is not in the dataset")
+    );
+    assert_eq!(
+        (missing.judge_model.as_deref(), missing.cost_usd),
+        (None, None)
+    );
+}
