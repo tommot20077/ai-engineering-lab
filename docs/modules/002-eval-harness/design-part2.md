@@ -113,6 +113,20 @@
   其他種類至少一條 `fail`,而且 `change` 要寫改了什麼。id 重複、未知欄位、空檔案都拒絕。
 - `CalibrationError::Read` 的訊息不含原因,原因只放在錯誤鏈裡(ROADMAP 待辦記的「原因印兩次」,新的型別一開始就避開)。
 
+### 校準集的資料(第 5 步實作時定下,`evals/calibration/rust-basics.jsonl`)
+
+- 40 筆、120 條標準,其中 35 條標成 `fail`:對照 12(每題一筆,Haiku、Sonnet 各 6 題)、明顯 5、微妙 9、捏造 6、
+  答非所問 4、injection 4。兩個模型各寫了 20 筆(對照組各 6),自我偏好才量得出來。
+- 原料是第一次比較的 24 個回答(人工逐條複核、細節用 rustc 驗證過,全部正確)。每一筆從其中一個回答出發,把指定的原文換掉;
+  寫題的腳本確認每段原文剛好出現一次。
+- **標籤要沒有爭議**:同一個錯誤概念出現在好幾處(例如程式碼註解也講了正確的說法)時,每一處都改,不留下「半對半錯」的回答;
+  改了什麼寫在 `change`。`types-002-subtle` 的錯誤同時推翻兩條標準(「沒窮舉只會警告」),兩條都標 `fail`。
+- 答非所問:換成另一題的、沒改過的回答,而且不用當作對照組的那一份(否則兩筆的回答完全一樣)。
+- injection 的那句有中文也有英文,有的寫給「評分者」、有的寫給「評審」,有的假裝是系統訊息。
+- `tests/datasets.rs` 檢查配方(數量、種類、每題的組成、兩個模型各半、回答不重複、injection 有寫給評審的話)與讀檔規則。
+  **測不到的**:某一處修改有沒有真的改到、標籤在語意上對不對。這要靠人工審查(已逐筆讀過改了好幾處的那幾筆),
+  以及第 6 步真的跑校準:如果某個錯誤其實沒放進去,三個評審都會「漏掉」同一筆,在報告的漏掉清單裡很顯眼。
+
 ## 4. `eval calibrate`
 
 ```
@@ -219,7 +233,7 @@ agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
 | 2 | 校準集的型別與讀檔檢查(`calibration.rs`)**(完成)** | parse, don't validate(`RawItem` → `Item`)、serde 的 `Visitor`、跨檔案的一致性檢查 |
 | 3 | 指標:抓錯率、冤枉率、Wilson 區間、一致率(純函式,已知答案用獨立的 Python 實作算)**(完成)** | `FromIterator`(自己的型別也能 `collect()`)、浮點數的邊界 |
 | 4 | `eval calibrate` 指令 + 報告(insta snapshot)+ E2E(wiremock 的假評審)**(完成)** | 重用 `Scorer`、clap 的重複參數、`collect::<Option<Vec<_>>>()`、算數字與排版分兩層 |
-| 5 | `evals/calibration/rust-basics.jsonl`(約 40 筆,§3) | — (資料) |
+| 5 | `evals/calibration/rust-basics.jsonl`(40 筆,§3)**(完成)** | `use … as …` 處理同名的型別 |
 | 6 | 真的跑(§5),結果寫進 README;更新 retro | — |
 
 ## 8. 已決定的事(2026-11-11,使用者確認)

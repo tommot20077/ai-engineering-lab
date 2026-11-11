@@ -145,6 +145,7 @@ A 對 A 的區間應該**大多包含 0**。如果常常顯示「有差異」,�
 評審自己也要量(design-part2、D-039):它抓得到錯嗎?會冤枉對的回答嗎?
 校準集是一份標好答案的回答:拿確認正確的真實回答,只改一句讓它違反一條評分標準(一次改一個地方,跟 mutation testing 一樣),
 另外放沒改的當對照。檔案放在資料集旁邊的 `calibration/<資料集名稱>.jsonl`,格式與檢查規則見 design-part2 §3。
+`rust-basics` 有一份([`evals/calibration/rust-basics.jsonl`](../../evals/calibration/rust-basics.jsonl)):40 筆、120 條標準、35 條標成 `fail`。
 
 ```bash
 eval calibrate --dataset rust-basics --judge strong --judge default --judge cheap --dry-run   # 先估價

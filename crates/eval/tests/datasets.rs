@@ -10,6 +10,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// `as`:這個檔案已經有一個 `Kind`(題型),校準集的「改法」換個名字引入。Java 遇到同名類別只能寫完整的套件名。
+use eval::calibration::{CalibrationSet, Kind as AnswerKind};
 use eval::score::{Checks, Scorer, VerdictResult};
 use eval::{Case, Dataset, Input, Output};
 use llm::Content;
@@ -291,4 +293,97 @@ fn rust_intermediate_answers_match_the_compiler() {
             .collect()
     });
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// 校準集(D-039)放在資料集旁邊的 `calibration/`:每一個都要讀得進來、對得上它的資料集
+/// (標籤的 key 是評分標準的全文、對照組全部 pass、改壞的至少一條 fail……,見 `CalibrationSet::parse`)。
+#[test]
+fn every_calibration_set_matches_its_dataset() {
+    let dir = evals_dir().join("calibration");
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "jsonl") {
+            let name = path.file_stem().unwrap().to_str().unwrap().to_owned();
+            let dataset = evals_dir().join(format!("{name}.jsonl"));
+            assert_eq!(CalibrationSet::path_for(&dataset), path);
+            let ds = Dataset::load(&dataset).unwrap_or_else(|e| panic!("{e}"));
+            CalibrationSet::load(&path, &ds).unwrap_or_else(|e| panic!("{e}"));
+            names.push(name);
+        }
+    }
+    names.sort();
+    assert_eq!(names, ["rust-basics"]);
+}
+
+/// rust-basics 的校準集照 design-part2 §3 的配方。
+#[test]
+fn the_rust_basics_calibration_set_follows_the_recipe() {
+    let ds = load("rust-basics");
+    let path = evals_dir().join("calibration/rust-basics.jsonl");
+    let set = CalibrationSet::load(&path, &ds).unwrap();
+    let count = |kind: AnswerKind| set.items.iter().filter(|i| i.kind == kind).count();
+
+    assert_eq!(set.items.len(), 40);
+    assert_eq!(
+        (
+            count(AnswerKind::Control),
+            count(AnswerKind::Obvious),
+            count(AnswerKind::Subtle)
+        ),
+        (12, 5, 9)
+    );
+    assert_eq!(
+        (
+            count(AnswerKind::Fabricated),
+            count(AnswerKind::OffTopic),
+            count(AnswerKind::Injection)
+        ),
+        (6, 4, 4)
+    );
+    // 每一題:一筆對照、兩筆改壞的(不算 injection)。
+    for case in &ds.cases {
+        let of = |pick: &dyn Fn(AnswerKind) -> bool| {
+            set.items
+                .iter()
+                .filter(|i| i.case_id == case.id && pick(i.kind))
+                .count()
+        };
+        assert_eq!(of(&|k| k == AnswerKind::Control), 1, "{}", case.id);
+        assert_eq!(
+            of(&|k| !matches!(k, AnswerKind::Control | AnswerKind::Injection)),
+            2,
+            "{}",
+            case.id
+        );
+    }
+    // 兩個模型寫的回答一樣多,對照組也各半:自我偏好才量得出來。
+    for model in ["claude-haiku-5-5", "claude-sonnet-5-5"] {
+        let by = |kind: Option<AnswerKind>| {
+            set.items
+                .iter()
+                .filter(|i| i.source_model == model && kind.is_none_or(|k| i.kind == k))
+                .count()
+        };
+        assert_eq!(
+            (by(None), by(Some(AnswerKind::Control))),
+            (20, 6),
+            "{model}"
+        );
+    }
+    // 每一筆回答都不一樣:改壞的真的有改,答非所問的也不是拿某一題的對照組來用。
+    let mut answers: Vec<&str> = set.items.iter().map(|i| i.answer.as_str()).collect();
+    answers.sort();
+    answers.dedup();
+    assert_eq!(answers.len(), set.items.len());
+    // injection 的回答裡都有一句寫給評審的話。
+    for item in set.items.iter().filter(|i| i.kind == AnswerKind::Injection) {
+        assert!(
+            ["評審", "評分者", "Evaluation note"]
+                .iter()
+                .any(|w| item.answer.contains(w)),
+            "{}",
+            item.id
+        );
+    }
 }
