@@ -40,17 +40,21 @@
 
 ## 目前位置
 
-- **模組**:002 Eval Harness — 設計完成,見 `docs/modules/002-eval-harness/design.md`(D-029~D-035)。
-- **下一步**:002 第 10 步的最後一項:第一次真的比較(`rust-basics`,`cheap` 對 `default`,評審 `default`),
-  結果寫進 `crates/eval/README.md`;之後第 11 步寫 retro。需要 `ANTHROPIC_API_KEY`(雲端 session 要重新啟動才會載入環境變數)。
-  第 1~10 步的其他部分完成:資料集、`Scorer` + 確定性檢查、執行器、LLM 評審、打分流程(design §6)、統計、
-  比較報告(design §7)、CLI 與 `eval.toml`(design §8)、`eval add`(design §4)、公開資料集(`evals/`)、
-  E2E(真的執行 eval 程式,上游是 wiremock)、crate README、`examples/offline.rs`。
-  沒評的標準記成 `Skipped`、統計時算 0 分(2026-11-09 決定,design §7)。
+- **模組**:002 Eval Harness — **完成**(2026-11-11,第 1~11 步)。設計 `docs/modules/002-eval-harness/design.md`(D-029~D-035),
+  回顧 `docs/modules/002-eval-harness/retro.md`。
+  內容:資料集、`Scorer` + 確定性檢查、執行器、LLM 評審、打分流程(design §6)、統計、比較報告(design §7)、
+  CLI 與 `eval.toml`(design §8)、`eval add`(design §4)、公開資料集(`evals/`)、E2E(真的執行 eval 程式,上游是 wiremock)、
+  crate README、`examples/offline.rs`。沒評的標準記成 `Skipped`、統計時算 0 分(2026-11-09 決定,design §7)。
+- **第一次真的比較**(2026-11-11):`rust-basics`,`cheap`(Haiku 5.5)對 `default`(Sonnet 5.5),評審 `default`。
+  兩邊 12/12 全過,差 +0.0、95% CI [+0.0, +0.0]、翻轉 0 題 → **天花板效應,這份資料集量不出差別**(不是「一樣好」)。
+  執行費用差 20 倍、連評審一起算只差 2.3 倍(評審是固定成本);延遲 p50 2.9 秒對 5.1 秒。整個實驗花 $0.177。
+  細節與解讀見 `crates/eval/README.md`「第一次真的比較」。
+- **下一步**:003 Agent runtime + Tool calling + MCP 的設計(有設計分岔,先列方案給使用者選,再寫)。
+  eval 還有三件事要在拿它做決定(011)之前處理,見「待辦」:資料集要有會讓 Haiku 失敗的題目、評審要校準、兩個小問題。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
-- **最後更新**:2026-11-09
+- **最後更新**:2026-11-11
 
 ## 決策
 
@@ -101,7 +105,7 @@
 | # | 模組 | 層 | 狀態 |
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
-| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 實作完成(第 1~10 步),待第一次真的比較與 retro |
+| 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 完成(第 1~11 步,含第一次真的比較;回顧見 `retro.md`) |
 | 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
@@ -159,6 +163,17 @@
   001 已預留:`Alias` 只從 constructor 拿到表、不知道表從哪裡來(D-024),換掉提供者即可,`Alias` 不用改。
 - **呼叫紀錄的保留期限與壓縮(006 一起設計)**:目前只依 UTC 日期切檔,不依大小切(每天約數 MB)。
   到 006 時決定舊檔多久壓縮、多久刪除,以及要不要匯入 DuckDB / SQLite 查詢。
+- **eval 的資料集要有鑑別力、評審要校準(第一次真的比較發現,2026-11-11)**:`rust-basics` 12 題兩個模型全過,量不出差別。
+  拿 eval 做決定(011 灰度切換、010 路由比較)之前:(1) 加到 30 題以上,而且要有會讓 Haiku 失敗的題目;
+  (2) 量 A/A 雜訊底線;(3) 校準評審:換成不同於被評者的模型,並故意餵錯的回答,確認評審判得出不通過。
+  細節見 `crates/eval/README.md`「要讓這個比較有意義,下一步」。
+- **`finished_at` 等於 `started_at`(bug,第一次真的執行發現)**:`run_command`、`score_command` 在工作開始前呼叫一次
+  `Timestamp::now()`,同一個值同時當成開始與結束時間(`run.rs` 設 `meta.finished_at = Some(now)`、`score/flow.rs` 同)。
+  單元測試用注入的時間,看不出來。修法:結束時再取一次時間(`now` 參數拆成開始與結束,或注入時鐘);
+  修的時候要補一個「結束時間晚於開始時間」的測試。不影響統計與比較,只影響 `meta.json` 的紀錄。尚未修。
+- **零變異時信賴區間顯示成 `[+0.0, +0.0]`**:所有配對的差都是 0 時,paired bootstrap 退化成寬度 0 的區間,
+  容易被讀成「確定沒差」(報告只有「配對少於 30 個」的警告)。要不要在報告上特別標示(例如「所有配對都相同:區間無資訊」),
+  是顯示方式的設計選擇,等使用者決定。尚未改。
 - **私有目錄與「處理寫了一半的行」有兩份**:llm `JsonlWriter`(私有函式)與 eval `store.rs` 各寫了一份(約 20 行)。
   注意兩邊對半行的處理不同:llm 補換行封住(讀取端跳過壞行,D-021);eval 截掉(讀取端把中間的壞行當成檔案損壞而報錯)。
   出現第三個使用者時(例如 006 的紀錄分析),抽成共用的小工具;規則一樣:目錄 700、檔案 600、別人讀得到就拒絕。
