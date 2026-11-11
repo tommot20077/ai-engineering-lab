@@ -7,6 +7,8 @@
 [aliases]
 default = "claude-sonnet-5-5"
 cheap   = "claude-haiku-5-5"
+# 校準評審時拿來比較的第三個評審(`eval calibrate --judge strong`,design-part2 §5)。
+strong  = "claude-opus-5-5"
 
 [anthropic]
 # 預設 https://api.anthropic.com。只有 localhost 可以用 http(給測試用的假 server)。
@@ -50,5 +52,9 @@ datasets = "evals"
 # output = 0.0
 #
 # [prices."claude-sonnet-5-5"]
+# input = 0.0
+# output = 0.0
+#
+# [prices."claude-opus-5-5"]
 # input = 0.0
 # output = 0.0

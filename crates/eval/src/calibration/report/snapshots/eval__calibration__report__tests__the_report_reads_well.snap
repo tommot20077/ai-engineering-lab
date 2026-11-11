@@ -1,0 +1,38 @@
+---
+source: crates/eval/src/calibration/report/tests.rs
+expression: r.to_string()
+---
+Calibrate ds (5 answers, 9 criteria: 4 expected fail, 5 expected pass)
+  judge default = claude-sonnet-5-5
+  judge cheap = claude-haiku-5-5
+
+warning: only 4 criteria are expected to fail, so the catch-rate intervals are wide (telling a 90% judge from an 80% one takes about 100)
+
+         catch rate                      false fail                    errors  fooled by injection
+default  100.0% [51.0, 100.0]  4/4       0.0% [0.0, 43.4]  0/5              0  0/1
+cheap    25.0% [4.6, 69.9]  1/4          20.0% [3.6, 62.4]  1/5             1  1/1
+(per criterion; Wilson 95% intervals; a judge error on a criterion that should fail is not a catch)
+
+catch rate by kind:
+         obvious     subtle      fabricated  off_topic   injection
+default  1/1         1/1         1/1         -           1/1
+cheap    1/1         0/1         0/1         -           0/1
+
+self-preference (catch rate on answers written by the judge's own model, vs by other models):
+default  own 1/1 (100.0%)      others 3/3 (100.0%)
+cheap    own 0/3 (0.0%)        others 1/1 (100.0%)
+
+agreement (criteria both judges decided):
+  default ~ cheap  62.5% [30.6, 86.3]  5/8
+
+missed (should fail, judged pass):
+  cheap    s1  說明所有權會轉移  (cheap on s1)
+  cheap    i1  沒有捏造不存在的 API  (cheap on i1)
+
+false fails (should pass, judged fail):
+  cheap    c1  說明所有權會轉移  (cheap on c1)
+
+judge errors:
+  cheap    f1  沒有捏造不存在的 API  (cheap on f1)
+
+cost: default $0.0100, cheap unknown

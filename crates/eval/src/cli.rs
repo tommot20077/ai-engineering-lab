@@ -44,6 +44,8 @@ pub enum Command {
     Compare(CompareArgs),
     /// Turn a gateway call record into a case of a private dataset.
     Add(AddArgs),
+    /// Measure judges on a calibration set: do they catch planted mistakes, do they fail correct answers?
+    Calibrate(CalibrateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -157,6 +159,45 @@ pub struct AddArgs {
     /// Print the case instead of writing it.
     #[arg(long)]
     pub print: bool,
+}
+
+/// `eval calibrate`(design-part2 §4)。
+#[derive(Debug, Args)]
+pub struct CalibrateArgs {
+    /// Dataset name or path. Its calibration set is calibration/<name>.jsonl in the same directory.
+    #[arg(long)]
+    pub dataset: String,
+    /// Judge alias; repeat it to compare judges (default: [judge] alias).
+    // 重複給 `--judge` 就是多個評審;報告依這個順序排。
+    #[arg(long = "judge", value_name = "ALIAS")]
+    pub judges: Vec<String>,
+    /// Judge calls in flight at once (overrides [run] concurrency).
+    #[arg(long, value_parser = concurrency)]
+    pub concurrency: Option<usize>,
+    /// Stop calling the judges once they have cost this many US dollars in total.
+    #[arg(long, value_parser = positive_usd)]
+    pub budget: Option<f64>,
+    /// Print how many judge calls are needed and the worst-case cost, without calling a judge.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl CalibrateArgs {
+    /// 要校準的評審,依命令列的順序;沒給就是設定檔的 `[judge] alias`。
+    /// 同一個別名給兩次一定是打錯了:會花兩次錢,報告裡也會出現兩行一樣的評審。
+    pub fn judges<'a>(&'a self, configured: &'a str) -> Result<Vec<&'a str>, String> {
+        if self.judges.is_empty() {
+            return Ok(vec![configured]);
+        }
+        let mut judges: Vec<&str> = Vec::new();
+        for alias in &self.judges {
+            if judges.contains(&alias.as_str()) {
+                return Err(format!("--judge `{alias}` is given twice"));
+            }
+            judges.push(alias);
+        }
+        Ok(judges)
+    }
 }
 
 impl ScoreArgs {

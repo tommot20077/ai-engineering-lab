@@ -12,8 +12,10 @@ use std::path::{Path, PathBuf};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use llm::{Content, ProviderMetadata, Response, StopKind, StopReason, Usage};
+
 use crate::dataset::{bullet_list, line_of, without_position};
-use crate::{Case, Dataset};
+use crate::{Case, Dataset, Output};
 
 /// 讀進來、檢查過的校準集。
 #[derive(Debug)]
@@ -90,7 +92,36 @@ pub enum CalibrationError {
     },
 }
 
+impl Item {
+    /// 把這個回答包成「模型的回答」交給評審:跟正式打分時評審看到的一模一樣。
+    /// 模型 id 填 `source_model`,自我偏好的判斷才對得上。
+    pub fn output(&self) -> Output {
+        Output::Chat(Response {
+            id: None,
+            model: self.source_model.clone(),
+            content: vec![Content::Text {
+                text: self.answer.clone(),
+                meta: ProviderMetadata::default(),
+            }],
+            stop: StopReason {
+                kind: StopKind::EndTurn,
+                raw: "end_turn".into(),
+            },
+            usage: Usage::default(),
+            meta: ProviderMetadata::default(),
+        })
+    }
+}
+
 impl CalibrationSet {
+    /// 資料集的校準集放在哪裡:同一個目錄的 `calibration/<資料集名稱>.jsonl`。
+    /// `evals/rust-basics.jsonl` → `evals/calibration/rust-basics.jsonl`(子目錄不會被當成資料集讀進去)。
+    pub fn path_for(dataset: &Path) -> PathBuf {
+        let name = dataset.file_name().unwrap_or_default();
+        let dir = dataset.parent().unwrap_or_else(|| Path::new(""));
+        dir.join("calibration").join(name)
+    }
+
     /// 讀一個校準集檔案,對照它的資料集檢查。
     pub fn load(path: &Path, dataset: &Dataset) -> Result<Self, CalibrationError> {
         let bytes = std::fs::read(path).map_err(|source| CalibrationError::Read {
@@ -308,7 +339,9 @@ where
     deserializer.deserialize_map(Entries)
 }
 
+pub mod calibrate;
 pub mod metrics;
+pub mod report;
 
 #[cfg(test)]
 mod tests;

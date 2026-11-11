@@ -354,6 +354,29 @@ impl Appender {
     }
 }
 
+/// 校準的原始判決檔(design-part2 §4):`<root>/<時間>_<資料集>.jsonl`,目錄 700、檔案 600。
+/// 同一秒、同一個資料集校準兩次就拒絕(`create_new`),不能把兩次的判決混在一起(同 `RunDir::create`)。
+pub fn create_calibration_log(
+    root: &Path,
+    dataset: &str,
+    started_at: Timestamp,
+) -> Result<(PathBuf, Appender), StoreError> {
+    ensure_private_dir(root)?;
+    let name = format!(
+        "{}_{}.jsonl",
+        started_at.strftime("%Y%m%dT%H%M%SZ"),
+        safe_name(dataset)
+    );
+    let path = root.join(name);
+    let file = OpenOptions::new()
+        .create_new(true)
+        .append(true)
+        .mode(0o600)
+        .open(&path)
+        .at(&path)?;
+    Ok((path.clone(), Appender { file, path }))
+}
+
 /// 開檔(600)。`append`:往後加;否則清空重寫。
 fn private_file(path: &Path, append: bool) -> Result<File, StoreError> {
     OpenOptions::new()
@@ -480,6 +503,37 @@ mod tests {
 
     // 注意:`tempfile` 建立的暫存目錄是 755(別人讀得到),直接拿它當 runs 目錄會被正確地拒絕。
     // 所以測試一律用它底下的 `runs`,由程式自己建立(700)。
+    #[test]
+    fn a_calibration_log_is_private_and_never_reused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("calibrations");
+        let at: Timestamp = "2026-11-11T04:30:00Z".parse().unwrap();
+
+        let (path, mut log) = create_calibration_log(&root, "rust/basics", at).unwrap();
+        log.append(&json!({"judge": "cheap"})).unwrap();
+        log.append(&json!({"judge": "strong"})).unwrap();
+
+        assert_eq!(path, root.join("20261111T043000Z_rust-basics.jsonl"));
+        assert_eq!(mode(&root), 0o700);
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"judge\":\"cheap\"}\n{\"judge\":\"strong\"}\n"
+        );
+        // 同一秒再校準一次:拒絕,不能寫進同一個檔案。
+        // `.err().unwrap()` 而不是 `unwrap_err()`:後者要求 `Ok` 那邊能印出來(`Debug`),`Appender` 沒有。
+        let again = create_calibration_log(&root, "rust/basics", at)
+            .err()
+            .unwrap();
+        assert!(
+            again
+                .to_string()
+                .contains("20261111T043000Z_rust-basics.jsonl"),
+            "{again}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 2);
+    }
+
     fn mode(path: &Path) -> u32 {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777
     }

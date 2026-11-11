@@ -21,6 +21,13 @@ fn score(args: &[&str]) -> ScoreArgs {
     }
 }
 
+fn calibrate(args: &[&str]) -> CalibrateArgs {
+    match parse(args).unwrap().command {
+        Command::Calibrate(c) => c,
+        other => panic!("{other:?}"),
+    }
+}
+
 fn kind(args: &[&str]) -> ErrorKind {
     parse(args).unwrap_err().kind()
 }
@@ -298,5 +305,75 @@ fn add_needs_a_record_a_dataset_and_at_least_one_rubric_item() {
             "r"
         ]),
         ErrorKind::ValueValidation
+    );
+}
+
+#[test]
+fn calibrate_uses_the_configured_judge_unless_judges_are_given() {
+    let c = calibrate(&["calibrate", "--dataset", "rust-basics"]);
+    assert_eq!(c.dataset, "rust-basics");
+    assert_eq!(c.judges("default"), Ok(vec!["default"]));
+
+    let c = calibrate(&[
+        "calibrate",
+        "--dataset",
+        "x",
+        "--judge",
+        "strong",
+        "--judge",
+        "default",
+        "--judge",
+        "cheap",
+    ]);
+    assert_eq!(
+        c.judges("default"),
+        Ok(vec!["strong", "default", "cheap"]),
+        "報告依命令列的順序"
+    );
+}
+
+#[test]
+fn calibrate_refuses_a_judge_named_twice() {
+    let c = calibrate(&[
+        "calibrate",
+        "--dataset",
+        "x",
+        "--judge",
+        "cheap",
+        "--judge",
+        "strong",
+        "--judge",
+        "cheap",
+    ]);
+    assert_eq!(
+        c.judges("default"),
+        Err("--judge `cheap` is given twice".to_owned())
+    );
+}
+
+#[test]
+fn calibrate_needs_a_dataset_and_checks_its_numbers() {
+    assert_eq!(kind(&["calibrate"]), ErrorKind::MissingRequiredArgument);
+    assert_eq!(
+        kind(&["calibrate", "--dataset", "x", "--budget", "0"]),
+        ErrorKind::ValueValidation
+    );
+    assert_eq!(
+        kind(&["calibrate", "--dataset", "x", "--concurrency", "0"]),
+        ErrorKind::ValueValidation
+    );
+    let c = calibrate(&[
+        "calibrate",
+        "--dataset",
+        "x",
+        "--budget",
+        "1.5",
+        "--concurrency",
+        "2",
+        "--dry-run",
+    ]);
+    assert_eq!(
+        (c.budget, c.concurrency, c.dry_run),
+        (Some(1.5), Some(2), true)
     );
 }

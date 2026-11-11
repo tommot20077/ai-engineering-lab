@@ -18,6 +18,8 @@ pub use flow::{
     ScoreReport, ScoreResult, ScoreSetup, ScoreSummary, ScoreWarning, estimate, score,
 };
 pub use judge::Judge;
+// 評審逾時、拿不到判決時,把每一條標準記成 `Error`;校準(`calibration::calibrate`)也用同一個。
+pub(crate) use judge::error_verdicts;
 
 /// 打分器。現在有確定性檢查(`Checks`)與 LLM 評審(`Judge`),之後也可能有其他的(例如 Jev)。
 ///

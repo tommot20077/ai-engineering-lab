@@ -272,3 +272,27 @@ fn a_missing_file_names_the_path_and_keeps_the_cause_in_the_chain() {
     let cause = std::error::Error::source(&err).unwrap().to_string();
     assert!(cause.contains("No such file"), "{cause}");
 }
+
+#[test]
+fn the_calibration_set_lives_next_to_its_dataset() {
+    assert_eq!(
+        CalibrationSet::path_for(Path::new("/repo/evals/rust-basics.jsonl")).to_str(),
+        Some("/repo/evals/calibration/rust-basics.jsonl")
+    );
+    assert_eq!(
+        CalibrationSet::path_for(Path::new("/data/datasets/personal.jsonl")).to_str(),
+        Some("/data/datasets/calibration/personal.jsonl")
+    );
+}
+
+#[test]
+fn an_answer_reaches_the_judge_as_the_source_model_wrote_it() {
+    let set = CalibrationSet::parse(item("x", |_| {}).as_bytes(), &dataset()).unwrap();
+    let output = set.items[0].output();
+    assert_eq!(output.text(), "move 會複製一份。");
+    assert_eq!(
+        output.model(),
+        "claude-haiku-5-5",
+        "自我偏好要比對原本寫這個回答的模型"
+    );
+}

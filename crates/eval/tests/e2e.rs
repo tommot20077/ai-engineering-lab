@@ -6,7 +6,8 @@
 //!
 //! 單元測試碰不到 `main.rs`(讀設定檔、讀 API key、組裝 provider、印出結果);這裡補上。
 //! 假 Claude 依題目決定回答:`cheap`(claude-haiku-5-5)答錯 JSON 那一題,`default`(claude-sonnet-5-5)全對,
-//! 所以比較報告的數字是可以預期的。評審的請求(system 裡有 "strict grader")回覆逐條通過。
+//! 所以比較報告的數字是可以預期的。評審的請求(system 裡有 "strict grader")回覆逐條通過,
+//! 只有校準集故意改壞的回答例外(見 `judge_reply`)。
 
 #![allow(
     clippy::unwrap_used,
@@ -41,7 +42,7 @@ impl Respond for FakeClaude {
             .as_str()
             .unwrap_or_default();
         let text = if system.contains("strict grader") {
-            judge_reply(question)
+            judge_reply(&model, question)
         } else {
             answer(&model, question)
         };
@@ -69,8 +70,15 @@ fn answer(model: &str, question: &str) -> String {
     }
 }
 
-/// 評審的回覆:「## Criteria」那一段有幾條就回幾條,全部通過。
-fn judge_reply(prompt: &str) -> String {
+/// 評審的回覆:「## Criteria」那一段有幾條就回幾條。
+/// 被評的回答裡有 `BREAKS<n>`(校準集故意改壞的)就判第 n 條不通過;
+/// 但 Haiku 看不出標了 `SUBTLE` 的錯。其他情況全部通過。
+fn judge_reply(model: &str, prompt: &str) -> String {
+    let answer = prompt
+        .split("## Answer to grade")
+        .nth(1)
+        .unwrap_or_default();
+    let blind = model == "claude-haiku-5-5" && answer.contains("SUBTLE");
     let criteria = prompt
         .split("## Criteria\n")
         .nth(1)
@@ -81,7 +89,10 @@ fn judge_reply(prompt: &str) -> String {
         .lines()
         .count();
     let verdicts: Vec<Value> = (1..=criteria)
-        .map(|n| json!({ "criterion": n, "passed": true, "reason": "ok" }))
+        .map(|n| {
+            let broken = answer.contains(&format!("BREAKS{n}"));
+            json!({ "criterion": n, "passed": !broken || blind, "reason": "ok" })
+        })
         .collect();
     json!({ "verdicts": verdicts }).to_string()
 }
@@ -556,4 +567,183 @@ async fn a_call_record_becomes_a_private_dataset_case() {
         ])
         .await;
     assert!(dry.starts_with("dry run: 1 call(s)"), "{dry}");
+}
+
+/// 一個小資料集與它的校準集:對照(Sonnet 寫的)、微妙的錯(Haiku 寫的,第 1 條)、明顯的錯(Sonnet 寫的,第 2 條)。
+fn calibration_lab(lab: &Lab) -> PathBuf {
+    let dataset = lab.dir.path().join("mini.jsonl");
+    std::fs::write(
+        &dataset,
+        r#"{"id":"a","input":{"type":"chat","max_tokens":64,"messages":[{"role":"user","content":[{"type":"text","text":"Explain move"}]}]},"rubric":["mentions ownership","no invented API"]}
+"#,
+    )
+    .unwrap();
+    let dir = lab.dir.path().join("calibration");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(
+        dir.join("mini.jsonl"),
+        r#"{"id":"c1","case":"a","source_model":"claude-sonnet-5-5","kind":"control","answer":"ownership moves","expected":{"mentions ownership":"pass","no invented API":"pass"}}
+{"id":"s1","case":"a","source_model":"claude-haiku-5-5","kind":"subtle","change":"copies","answer":"it copies BREAKS1 SUBTLE","expected":{"mentions ownership":"fail","no invented API":"pass"}}
+{"id":"o1","case":"a","source_model":"claude-sonnet-5-5","kind":"fabricated","change":"made-up API","answer":"call String::move_to() BREAKS2","expected":{"mentions ownership":"pass","no invented API":"fail"}}
+"#,
+    )
+    .unwrap();
+    dataset
+}
+
+/// 報告裡以 `prefix` 開頭的那一行。
+fn row<'a>(report: &'a str, prefix: &str) -> &'a str {
+    report
+        .lines()
+        .find(|l| l.starts_with(prefix))
+        .unwrap_or_else(|| panic!("no line starting with {prefix:?} in:\n{report}"))
+}
+
+#[tokio::test]
+async fn calibrate_measures_each_judge_on_planted_mistakes() {
+    let lab = Lab::start().await;
+    let dataset = calibration_lab(&lab);
+    let dataset = dataset.to_str().unwrap();
+
+    // 估價:不呼叫評審,也不需要 API key。2 個評審 × 3 筆。
+    let out = lab
+        .eval_with_key(
+            &[
+                "calibrate",
+                "--dataset",
+                dataset,
+                "--judge",
+                "default",
+                "--judge",
+                "cheap",
+                "--dry-run",
+            ],
+            None,
+        )
+        .await;
+    let (dry, stderr) = text(&out);
+    assert!(out.status.success(), "{dry}\n{stderr}");
+    assert!(
+        dry.starts_with("dry run: 6 call(s), worst-case cost $"),
+        "{dry}"
+    );
+    assert_eq!(lab.calls().await, 0);
+
+    let report = lab
+        .ok(&[
+            "calibrate",
+            "--dataset",
+            dataset,
+            "--judge",
+            "default",
+            "--judge",
+            "cheap",
+            "--budget",
+            "1.00",
+        ])
+        .await;
+
+    assert_eq!(lab.calls().await, 6);
+    assert!(
+        report.contains("Calibrate mini (3 answers, 6 criteria: 2 expected fail, 4 expected pass)"),
+        "{report}"
+    );
+    // default(Sonnet)兩個錯都抓到;cheap(Haiku)看不出 SUBTLE 的那個。
+    let default = row(&report, "default  ");
+    assert!(
+        default.contains("  2/2") && default.contains("  0/4"),
+        "{default}"
+    );
+    let cheap = row(&report, "cheap  ");
+    assert!(
+        cheap.contains("  1/2") && cheap.contains("  0/4"),
+        "{cheap}"
+    );
+    assert!(
+        report.contains("  cheap    s1  mentions ownership  (ok)"),
+        "{report}"
+    );
+    // 自我偏好:Haiku 寫的只有 s1,cheap 剛好漏掉它。
+    assert!(
+        row(&report, "cheap    own").contains("own 0/1 (0.0%)"),
+        "{report}"
+    );
+    assert!(report.contains("cost: default $"), "{report}");
+
+    // 原始判決檔:私有(600),一個評審一筆回答一行。
+    let results = report
+        .lines()
+        .find_map(|l| l.strip_prefix("results: "))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("no results path in:\n{report}"));
+    assert!(
+        results.starts_with(lab.dir.path().join("data/calibrations")),
+        "{}",
+        results.display()
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&results).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let lines: Vec<Value> = std::fs::read_to_string(&results)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let keys: Vec<(&str, &str)> = lines
+        .iter()
+        .map(|l| (l["judge"].as_str().unwrap(), l["item"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("default", "c1"),
+            ("default", "s1"),
+            ("default", "o1"),
+            ("cheap", "c1"),
+            ("cheap", "s1"),
+            ("cheap", "o1")
+        ]
+    );
+    assert_eq!(
+        lines[4]["verdicts"][0]["result"], "pass",
+        "cheap 漏掉 s1 的第 1 條"
+    );
+}
+
+#[tokio::test]
+async fn calibrate_refuses_mistakes_before_calling_a_judge() {
+    let lab = Lab::start().await;
+    let dataset = calibration_lab(&lab);
+    let dataset = dataset.to_str().unwrap();
+
+    let refused = |out: &Output, needle: &str| {
+        let (stdout, stderr) = text(out);
+        assert!(!out.status.success(), "{stdout}\n{stderr}");
+        assert!(stderr.contains(needle), "expected {needle:?} in:\n{stderr}");
+    };
+    refused(
+        &lab.eval(&[
+            "calibrate",
+            "--dataset",
+            dataset,
+            "--judge",
+            "cheap",
+            "--judge",
+            "cheap",
+        ])
+        .await,
+        "--judge `cheap` is given twice",
+    );
+    refused(
+        &lab.eval(&["calibrate", "--dataset", dataset, "--judge", "opus"])
+            .await,
+        "unknown model alias `opus`",
+    );
+    // smoke 沒有校準集。
+    refused(
+        &lab.eval(&["calibrate", "--dataset", "smoke"]).await,
+        "dataset `smoke` has no calibration set; expected ",
+    );
+    assert_eq!(lab.calls().await, 0);
+    assert!(!lab.dir.path().join("data/calibrations").exists());
 }

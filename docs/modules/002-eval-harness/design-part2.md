@@ -172,6 +172,20 @@ agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
   Wilson 區間一定包含觀察到的比例,所以下界夾在 [0, 比例]、上界夾在 [比例, 1]。
   已知答案的表(0/92、0/1 剛好算出精確的 0)沒抓到;掃過 n = 1..199 的性質測試才抓到。
 
+### 指令的細節(第 4 步實作時定下)
+
+- `eval calibrate --dataset <名稱或路徑> [--judge <別名>]… [--budget] [--dry-run] [--concurrency]`。
+  沒給 `--judge` 就用 `[judge] alias`;同一個別名給兩次拒絕(會花兩次錢)。校準集在資料集同一個目錄的 `calibration/<名稱>.jsonl`。
+- 原始判決檔:`<data_dir>/calibrations/<時間>_<資料集>.jsonl`,**一行一個(評審, 回答)**(不是一行一條標準):
+  判決、評審的理由、用量、費用。同一秒同一個資料集再校準一次就拒絕(`create_new`)。
+  **先建立結果檔再開始呼叫評審**:目錄權限這類問題要在花錢之前失敗。
+- 判決依標籤(= 評分標準)的順序對齊;評審少給某一條就記成 `Error`(不猜)。逾時的呼叫每一條都是 `Error`,沒有費用(不是 $0)。
+- 費用:評審回了卻沒有價格 → 該評審的總額未知;沒回的呼叫(逾時)不影響總額。`--budget` 需要每個評審都有價格。
+- 報告:抓錯率、冤枉率、出錯數、被 injection 騙(第一張表);依改法分組;自我偏好(評審自己的模型寫的回答 vs 別的模型寫的);
+  評審兩兩的一致率;**漏掉、冤枉、出錯的清單**附評審的理由(人最需要讀的部分)。標成 fail 的標準少於 100 條時印警告。
+  評審的理由是不可信輸入:換行換成空白,不能在報告裡排出假的內容。
+- 結果依「評審 → 回答」的順序排好(並行時完成的順序不一定),原始檔與報告每次一樣。
+
 ## 5. 三個評審
 
 - `eval.toml` 加別名 `strong = "claude-opus-5-5"`(價格 $4 / $20);`default`(Sonnet)、`cheap`(Haiku)已有。
@@ -204,7 +218,7 @@ agreement:  strong~default 96.7%   strong~cheap 85.0%   default~cheap 86.7%
 | 1 | `rust-intermediate` 資料集 + 資料集測試(標準答案每次都跟 rustc 比對)**(完成)** | `std::process::Command`、`std::thread::scope`、`find_map` |
 | 2 | 校準集的型別與讀檔檢查(`calibration.rs`)**(完成)** | parse, don't validate(`RawItem` → `Item`)、serde 的 `Visitor`、跨檔案的一致性檢查 |
 | 3 | 指標:抓錯率、冤枉率、Wilson 區間、一致率(純函式,已知答案用獨立的 Python 實作算)**(完成)** | `FromIterator`(自己的型別也能 `collect()`)、浮點數的邊界 |
-| 4 | `eval calibrate` 指令 + 報告(insta snapshot)+ E2E(wiremock 的假評審) | 重用 `Scorer`、clap 的重複參數 |
+| 4 | `eval calibrate` 指令 + 報告(insta snapshot)+ E2E(wiremock 的假評審)**(完成)** | 重用 `Scorer`、clap 的重複參數、`collect::<Option<Vec<_>>>()`、算數字與排版分兩層 |
 | 5 | `evals/calibration/rust-basics.jsonl`(約 40 筆,§3) | — (資料) |
 | 6 | 真的跑(§5),結果寫進 README;更新 retro | — |
 

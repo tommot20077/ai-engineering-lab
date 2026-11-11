@@ -16,11 +16,14 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use config_loader::ConfigError;
 use eval::add::{self, CaseOptions};
-use eval::cli::{AddArgs, Cli, Command, CompareArgs, RunArgs, ScoreArgs};
+use eval::calibration::CalibrationSet;
+use eval::calibration::calibrate::{self, CalibrateOptions, JudgeSetup};
+use eval::calibration::report::{CalibrationReport, JudgeName};
+use eval::cli::{AddArgs, CalibrateArgs, Cli, Command, CompareArgs, RunArgs, ScoreArgs};
 use eval::config::{RawConfig, Settings};
 use eval::run::{self, Estimate, ExecOptions, Price, RunConfig, Summary};
 use eval::score::{self, Judge, ScoreSetup, ScoreSummary};
-use eval::store::RunDir;
+use eval::store::{self, RunDir};
 use eval::{Dataset, compare};
 use jiff::Timestamp;
 use llm::{
@@ -41,6 +44,7 @@ async fn main() -> Result<()> {
         // 比較只讀兩個執行目錄,不需要設定檔,也不呼叫任何模型。
         Command::Compare(args) => compare_command(&args),
         Command::Add(args) => add_command(&load_settings(&cli.config)?, &args),
+        Command::Calibrate(args) => calibrate_command(&load_settings(&cli.config)?, &args).await,
     }
 }
 
@@ -289,6 +293,83 @@ fn git_commit() -> Option<String> {
 
 fn usd(value: Option<f64>) -> String {
     value.map_or_else(|| "unknown".to_owned(), |v| format!("${v:.4}"))
+}
+
+/// `eval calibrate`:每個評審評校準集的每一筆回答,印出抓錯率、冤枉率等(design-part2 §4)。
+async fn calibrate_command(settings: &Settings, args: &CalibrateArgs) -> Result<()> {
+    // `map_err(anyhow::Error::msg)`:`judges` 回傳的是 `String` 錯誤,轉成 anyhow 才能用 `?`。
+    let aliases = args
+        .judges(&settings.judge.alias)
+        .map_err(anyhow::Error::msg)?;
+    for alias in &aliases {
+        settings.require_alias(alias)?;
+    }
+    let dataset_path = settings.find_dataset(&args.dataset)?;
+    let dataset = Dataset::load(&dataset_path)?;
+    let set_path = CalibrationSet::path_for(&dataset_path);
+    if !set_path.exists() {
+        bail!(
+            "dataset `{}` has no calibration set; expected {}",
+            dataset.name,
+            set_path.display()
+        );
+    }
+    let set = CalibrationSet::load(&set_path, &dataset)?;
+
+    // 只有真的要叫評審時才讀 API key(同 score)。
+    let provider: Arc<dyn LlmProvider> = if args.dry_run {
+        Arc::new(Offline)
+    } else {
+        build_provider(settings)?
+    };
+    // `require_alias` 擋過了,別名一定在表裡;`unwrap_or` 只是為了不用 unwrap。
+    let models: Vec<&str> = aliases
+        .iter()
+        .map(|alias| settings.aliases.get(*alias).map_or(*alias, String::as_str))
+        .collect();
+    let judges: Vec<Judge> = aliases
+        .iter()
+        .map(|alias| Judge::new(provider.clone(), alias, &settings.judge.effort))
+        .collect();
+    let setups: Vec<JudgeSetup<'_>> = aliases
+        .iter()
+        .zip(&models)
+        .zip(&judges)
+        .map(|((alias, model), judge)| JudgeSetup {
+            alias,
+            model,
+            judge,
+            price: settings.price_of(alias),
+        })
+        .collect();
+
+    if args.dry_run {
+        let estimate = calibrate::estimate(&set, &dataset, &setups);
+        print_estimate("a judge", &aliases.join(", "), &estimate);
+        return Ok(());
+    }
+    // 先建立結果檔再開始花錢:目錄權限不對這類問題,要在呼叫評審之前就失敗。
+    let (path, mut log) =
+        store::create_calibration_log(&settings.calibrations_dir, &dataset.name, Timestamp::now())?;
+    let options = CalibrateOptions {
+        concurrency: args.concurrency.unwrap_or(settings.concurrency),
+        timeout: settings.timeout,
+        budget_usd: args.budget,
+    };
+    let calibration = calibrate::calibrate(&set, &dataset, &setups, options).await?;
+    for line in &calibration.lines {
+        log.append(line)?;
+    }
+    let names: Vec<JudgeName<'_>> = setups
+        .iter()
+        .map(|s| JudgeName {
+            alias: s.alias,
+            model: s.model,
+        })
+        .collect();
+    println!("results: {}", path.display());
+    print!("{}", CalibrationReport::new(&set, &names, &calibration));
+    Ok(())
 }
 
 fn print_estimate(role: &str, model: &str, estimate: &Estimate) {

@@ -63,6 +63,7 @@ fn defaults_fill_in_everything_that_is_optional() {
             timeout: Duration::from_secs(300),
             prices: BTreeMap::new(),
             runs_dir: "/data/eval/runs".into(),
+            calibrations_dir: "/data/eval/calibrations".into(),
             private_datasets: "/data/eval/datasets".into(),
             // 相對路徑以設定檔所在的目錄為準(config-loader,D-025)。
             public_datasets: tmp.path().join("evals"),

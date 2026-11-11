@@ -110,6 +110,8 @@ pub struct Settings {
     pub prices: BTreeMap<String, Price>,
     /// 每次執行一個目錄(`<data_dir>/runs`)。
     pub runs_dir: PathBuf,
+    /// 校準的原始判決檔(`<data_dir>/calibrations`,design-part2 §4)。
+    pub calibrations_dir: PathBuf,
     /// 私有資料集(`<data_dir>/datasets`)。
     pub private_datasets: PathBuf,
     pub public_datasets: PathBuf,
@@ -278,6 +280,7 @@ impl Settings {
                     timeout: Duration::from_secs(raw.run.timeout_secs),
                     prices: raw.prices.clone(),
                     runs_dir: data_dir.join("runs"),
+                    calibrations_dir: data_dir.join("calibrations"),
                     private_datasets: data_dir.join("datasets"),
                     public_datasets,
                     records_dir,
