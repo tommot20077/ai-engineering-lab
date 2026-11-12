@@ -54,12 +54,14 @@
   校準集 `evals/calibration/rust-basics.jsonl`(40 筆、35 條標成 fail)、`eval calibrate`(抓錯率、冤枉率、被 injection 騙、一致率,Wilson 區間)。
   **結果**:評審可信(Opus、Sonnet 抓到 35/35,Haiku 33/35;對照組 0 冤枉;injection 0/4);`rust-intermediate` 上 Haiku 87.1% 對 Sonnet 96.8%
   (+9.7 [+0.0, +22.6]),但 A/A 就有 +6.5、3 題翻轉裡 2 題在 A/A 也翻轉 → **仍然分不出兩個模型**;三個評審逐條 100% 一致。評審維持 Sonnet。花 $1.11。
-- **下一步**:003 Agent runtime + Tool calling + MCP 的設計(有設計分岔,先列方案給使用者選,再寫)。
+- **模組 003 Agent runtime**(2026-11-12 開始):四個分岔已選(D-041~D-045),第一部分的設計草稿
+  `docs/modules/003-agent-runtime/design.md`。
+- **下一步**:使用者確認 003 design §10 的五個小決定 → 改成「已定案」→ 照 §11 從第 1 步開始實作。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
-- **最後更新**:2026-11-11
+- **最後更新**:2026-11-12
 
 ## 決策
 
@@ -105,6 +107,11 @@
 | D-038 | eval 新資料集 `rust-intermediate`(`rust-basics` 不動);約 6 成是標準答案由 rustc 決定的題目(編譯錯誤、預測輸出、能不能編譯),寫題時實際編譯或執行確認;依設計的難度寫題,不依結果篩題(試跑只修題意不清或答案錯的題,正式比較重新跑) | 第一次比較兩邊全過、量不出差別;有標準答案的題目便宜、穩定、不受評審影響,也是階段 3 RL 要的可驗證任務;依結果篩題會高估差距 | 2026-11-11 |
 | D-039 | 評審校準:校準集用「拿已確認正確的真實回答改一句,讓它違反一條評分標準」做成,另放沒改的當對照;標籤以評分標準的全文為 key;新子命令 `eval calibrate` 直接重用 `Judge`,報抓錯率、冤枉率、被 injection 騙的比例(Wilson 95% 區間);不做接續;這次只報數字、不設門檻 | 第 0 步證明了評審沒放水,但回答裡沒有錯可抓,抓錯率仍未知;改一句讓標籤確定、風格跟真實回答一樣(mutation testing 的做法);標準改了字就對不上、讀檔時拒絕 | 2026-11-11 |
 | D-040 | 評審比較 Sonnet 5.5、Opus 5.5(別名 `strong`)、Haiku 5.5,同一個 effort;回答裡程式碼的 `compiles` 檢查等 003 的沙箱再做 | 換評審結論會不會變,要有資料;對不可信的輸出跑 compiler 需要隔離環境,003 的工具沙箱本來就要做 | 2026-11-11 |
+| D-041 | 003 分三部分:① agent loop + 工具介面 + 沒有副作用的內建工具 + 護欄 ② MCP client(接到同一個工具介面)③ 沙箱(寫檔、跑程式的工具,含 D-040 的 `compiles` 檢查) | 每部分都能單獨跑起來、看到成果;MCP 和沙箱各自是大題目,一起做回饋太慢 | 2026-11-12 |
+| D-042 | agent loop 是單純的迴圈(呼叫模型 → 執行工具 → 結果接回去),每一步產生一筆事件(軌跡);引擎自己強制終止條件(輪數、工具呼叫次數、token 合計、總時間);停止原因不認得或前後矛盾一律當失敗 | 簡單好讀;軌跡可除錯、給 eval 打分、之後做接續。明確的狀態機要等有「人工核准」的工具再做,現在是預先抽象;圖形 DSL 違反「核心機制自己寫」 | 2026-11-12 |
+| D-043 | 內建工具的參數是 Rust struct:serde 解析成功即驗證通過,送給模型的 JSON Schema 由同一個 struct 產生(`schemars`);另有抹除型別的工具介面,MCP 工具直接實作它、在執行期用對方的 schema 驗證 | 工具參數是不可信輸入;schema 與解析同一個來源,不會不一致;手寫 schema 要人工保持一致 | 2026-11-12 |
+| D-044 | 第一批內建工具沒有副作用:`calculator`(自己寫 parser)、`current_time`、`read_file`(只讀、限定在指定目錄內);`web_fetch` 與會寫檔、跑程式的工具延後 | 第一部分不需要沙箱;`web_fetch` 要處理 SSRF 與 eval 作弊(Harness²) | 2026-11-12 |
+| D-045 | `crates/agent` 是 library、直接用 `llm`;agent 的 CLI 套 Record(真實使用,是階段 2 的原料),eval 跑 agent 時不套(D-033);軌跡由 binary 寫進私有目錄(700/600) | Record 要不要套由組裝的地方決定,library 不知道;library 不寫檔(D-016) | 2026-11-12 |
 
 ## 模組
 
@@ -114,7 +121,7 @@
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 完成:第一部分(第 1~11 步,第一次真的比較)、第二部分(資料集與評審校準,第二次比較);回顧見 `retro.md` |
-| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | — |
+| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 設計中:第一部分(loop + 內建工具)草稿,分三部分(D-041) |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
 
@@ -192,6 +199,9 @@
 - **錯誤訊息裡的原因印了兩次**:eval 的 `StoreError::Io`、`DatasetError::Read` 的訊息裡含 `{source}`,同時又標成 `#[source]`,
   CLI 用 anyhow 印出時會變成「…: No such file」加上「Caused by: No such file」。兩者擇一(建議訊息不含原因,交給原因鏈印)。
   第 8 步做 CLI 時發現,不影響行為。
+- **呼叫紀錄記上它屬於哪次 agent 執行**(003 design §6):agent 一次執行有好幾次模型呼叫,各自是一筆紀錄,
+  目前無法從紀錄看出它們屬於同一次執行(每筆的 request 含到那一輪為止的完整對話,所以最後一筆有全貌)。
+  要改 `CallRecord` 的格式(`schema_version` 加一),等 006 分析紀錄時再決定。
 - **模型別名**:已決定(D-023、D-024),別名放 `gateway.toml`,未知別名回 400。
   `LLM_MODEL`(範例)、`LIVE_MODEL`(live test)兩個環境變數維持給 `crates/llm` 的範例與測試用。
 
