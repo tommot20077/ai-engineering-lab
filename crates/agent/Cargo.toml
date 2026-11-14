@@ -1,0 +1,31 @@
+[package]
+name = "agent"
+description = "Agent runtime: a tool-calling loop with engine-owned guards and typed tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+llm = { path = "../llm" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# 工具參數的 JSON Schema 由參數 struct 產生(D-043)。
+schemars.workspace = true
+# `BoxFuture`:抹除型別的工具要能放進 `Vec<Box<dyn ErasedTool>>`(同 llm 的 `LlmProvider`)。
+futures.workspace = true
+# `current_time` 的時間與時區;跟 llm、eval 用同一套。
+jiff.workspace = true
+# 每次執行的 id(UUID v7,開頭是時間)。
+uuid.workspace = true
+
+[dev-dependencies]
+# `#[tokio::test]`:工具的 `call` 是 async,測試要有 runtime 才能 `.await`。
+tokio = { workspace = true, features = ["macros", "rt"] }
+# 鎖住送給模型的工具定義(名稱、說明、schema),改了要人看過 diff 才接受。
+insta.workspace = true

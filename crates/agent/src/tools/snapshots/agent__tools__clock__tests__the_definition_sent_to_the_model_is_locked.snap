@@ -1,0 +1,21 @@
+---
+source: crates/agent/src/tools/clock.rs
+expression: CurrentTime.def()
+---
+{
+  "name": "current_time",
+  "description": "取得現在的日期、時間與星期幾。你自己不知道現在的時間;問題跟「今天」「現在」「幾天後」有關時,先用這個工具。",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "timezone": {
+        "description": "IANA 時區名稱,例如 \"Asia/Taipei\"。省略時用 UTC。",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "type": "object"
+  }
+}

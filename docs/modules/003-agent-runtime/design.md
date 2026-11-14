@@ -1,7 +1,7 @@
 # 003 Agent Runtime — 設計(第一部分:agent loop 與內建工具)
 
-> 狀態:**草稿(2026-11-12)**。四個分岔已由使用者選定(D-041 ~ D-045,記在 ROADMAP 決策表);
-> §10 是這份文件裡較小的決定,附建議,等使用者確認後改成「已定案」。
+> 狀態:**已定案(2026-11-14)**。四個分岔由使用者選定(D-041 ~ D-045,記在 ROADMAP 決策表);
+> §10 的五個小決定都照建議。
 
 ## 1. 要解決什麼
 
@@ -67,8 +67,8 @@ pub trait Tool: Send + Sync {
 
 // 第二層:抹除型別,可以放進 Vec<Box<dyn ErasedTool>>。參數是模型給的原始 JSON 字串。
 pub trait ErasedTool: Send + Sync {
-    fn def(&self) -> &ToolDef;
-    fn call<'a>(&'a self, args_json: &'a str, ctx: &'a ToolContext) -> BoxFuture<'a, Result<String, ToolError>>;
+    fn def(&self) -> ToolDef;
+    fn call_json<'a>(&'a self, args_json: &'a str, ctx: &'a ToolContext) -> BoxFuture<'a, Result<String, ToolError>>;
 }
 // 所有 Tool 自動實作 ErasedTool(blanket impl):先用 serde 解析 args_json,失敗就回 ToolError::InvalidArgs。
 ```
@@ -83,6 +83,20 @@ pub trait ErasedTool: Send + Sync {
   時鐘(測試與 eval 可以固定時間)。
 - **錯誤一律交回模型**:參數錯、工具失敗、找不到工具,都變成 `is_error: true` 的 `ToolResult`,讓模型自己修正。
   錯誤訊息只寫模型需要知道的(例如 `read_file` 只寫相對路徑,不洩漏目錄外的絕對路徑)。
+
+### 實作時定下的(第 1 步,`tool.rs`、`tools/clock.rs`)
+
+- `ErasedTool::def()` 回傳 `ToolDef`(不是參考):blanket impl 沒有地方存算好的定義;`Toolbox` 建立時算一次、存起來。
+  抹除型別的方法叫 `call_json`,不叫 `call`:同一個型別同時實作兩個 trait,兩個都叫 `call` 會讓呼叫端寫 `t.call(..)` 時有歧義。
+- **參數必須是 JSON 物件**:serde derive 出來的 struct 也接受 JSON 陣列(照欄位順序填,`[1, 2]` 變成 `a = 1, b = 2`),
+  比 schema 寬鬆。所以先解析成 `Value`、確認是物件,再轉成參數型別。這是測試抓到的(第 1 步的空殼測試)。
+- 產生 schema:draft 2020-12、不要 `$schema`、拿掉 `title`(Rust 的型別名稱)、巢狀型別直接展開(不用 `$defs` + `$ref`)。
+  參數 struct 欄位上的 `///` 會變成 schema 的 description、送給模型,所以寫給模型;給讀程式的人的說明用 `//`。
+- `Toolbox` 的錯誤訊息裡,工具名稱用 `{:?}` 印(跳脫換行等字元):第二部分的名稱來自 MCP server,不可信。
+  也檢查 schema 的 `type` 是 `object`(Anthropic 的規定;參數是 `i64` 之類的工具會被拒絕)。
+- `current_time` 回傳 `2026-11-14T10:30:00+08:00[Asia/Taipei], Saturday`;星期幾用當地日期算。時區名稱先檢查形狀
+  (最多 64 字元、以 `/` 分段、每段非空、只有英數字與 `_` `-` `+`)再查 jiff。jiff 本來就只比對它掃描 zoneinfo 得到的名稱清單,
+  讀不到目錄外的檔案;自己再檢查一次是不依賴第三方的內部行為,錯誤訊息也更清楚。
 
 ## 5. Agent loop(D-042)
 
@@ -195,7 +209,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
   要讀 fixture 檔案才答得出來的題目。
 - 真的跑一次:Haiku 對 Sonnet(都給工具),以及 Haiku 給工具對不給工具(同樣的題目用 `Input::Chat`)。
 
-## 10. 待你確認(附建議)
+## 10. 已決定的小事(2026-11-14,使用者確認,都照建議)
 
 1. **加 `list_dir`**(建議加):只讀、跟 `read_file` 共用路徑檢查;沒有它,模型只能猜檔名。
 2. **eval 整合放在第一部分最後**(建議放):第一部分結束時就有數字,不只是「跑得起來」。不放的話,第一部分在第 5 步結束。
@@ -209,7 +223,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 
 | # | 內容 | 主要 Rust 概念 |
 |---|---|---|
-| 1 | crate 骨架、`Tool` / `ErasedTool` / `Toolbox`、`current_time` | 關聯型別、trait 回傳 `impl Future`、blanket impl 做型別抹除、schemars derive、insta 鎖 schema |
+| 1 | crate 骨架、`Tool` / `ErasedTool` / `Toolbox`、`current_time` **(完成)** | 關聯型別、trait 回傳 `impl Future`、blanket impl 做型別抹除、schemars derive、insta 鎖 schema |
 | 2 | `calculator` | `Peekable<Chars>` 寫 lexer、Pratt parser(binding power)、遞迴深度上限、proptest |
 | 3 | `read_file`、`list_dir` | `Path` / `PathBuf` / `Component`、`canonicalize`、symlink 測試、`#[cfg(unix)]` |
 | 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應) | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
