@@ -108,30 +108,29 @@ type CharStream<'a> = Peekable<Enumerate<Chars<'a>>>;
 fn lex(expression: &str) -> Result<Vec<Token>, CalcError> {
     let mut chars: CharStream = expression.chars().enumerate().peekable();
     let mut tokens = Vec::new();
-    // `while let Some(&(i, c)) = chars.peek()`:只偷看,決定要怎麼讀之後才真的拿走。
-    while let Some(&(i, c)) = chars.peek() {
+    // 每一輪先拿走一個字元,再決定怎麼處理:不管後面的分支怎麼寫,迴圈一定往前走、一定會結束。
+    // 舊寫法是「先 peek、各分支自己拿走」:只要有一個分支沒拿(cargo-mutants 把 `take_while` 換成回傳空字串),
+    // 就會一直讀同一個字元、一直塞 token,幾秒內吃掉好幾 GB 記憶體,CI 機器直接被關掉(第 2 步的 Mutants (diff))。
+    while let Some((i, c)) = chars.next() {
         let at = i + 1;
         let token = match c {
-            c if c.is_whitespace() => {
-                chars.next();
-                continue;
-            }
-            '0'..='9' | '.' => number(&mut chars, at)?,
-            c if c.is_ascii_alphabetic() => Token {
-                kind: Kind::Name,
-                text: take_while(&mut chars, |c| c.is_ascii_alphanumeric()),
-                at,
-            },
-            c => {
-                // `ok_or(..)?`:不認得的字元,把 `None` 換成錯誤丟出去。
-                let kind = symbol(c).ok_or(CalcError::UnexpectedChar { ch: c, at })?;
-                chars.next();
+            c if c.is_whitespace() => continue,
+            '0'..='9' | '.' => number(c, &mut chars, at)?,
+            c if c.is_ascii_alphabetic() => {
+                let mut text = String::from(c);
+                text.push_str(&take_while(&mut chars, |c| c.is_ascii_alphanumeric()));
                 Token {
-                    kind,
-                    text: c.to_string(),
+                    kind: Kind::Name,
+                    text,
                     at,
                 }
             }
+            c => Token {
+                // `ok_or(..)?`:不認得的字元,把 `None` 換成錯誤丟出去。
+                kind: symbol(c).ok_or(CalcError::UnexpectedChar { ch: c, at })?,
+                text: c.to_string(),
+                at,
+            },
         };
         tokens.push(token);
     }
@@ -154,8 +153,10 @@ fn symbol(c: char) -> Option<Kind> {
 }
 
 /// 讀一個數字:`12`、`1.5`、`.5`、`1.`、`1e3`、`2E-1`。
-fn number(chars: &mut CharStream, at: usize) -> Result<Token, CalcError> {
-    let mut text = take_while(chars, |c| c.is_ascii_digit() || c == '.');
+/// `first` 是已經拿走的第一個字元。
+fn number(first: char, chars: &mut CharStream, at: usize) -> Result<Token, CalcError> {
+    let mut text = String::from(first);
+    text.push_str(&take_while(chars, |c| c.is_ascii_digit() || c == '.'));
     // 指數:`e` 後面要接數字(或正負號再接數字),才算數字的一部分;`2e` 的 `e` 是另一個 token。
     // 判斷要往後看兩個字元,`peek()` 只能看一個:複製一份 iterator 往前走,不影響原本的位置。
     // (`Peekable<Chars>` 實作了 `Clone`,複製只是幾個指標,不會複製字串。)

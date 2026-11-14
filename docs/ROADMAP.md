@@ -199,6 +199,9 @@
 - **錯誤訊息裡的原因印了兩次**:eval 的 `StoreError::Io`、`DatasetError::Read` 的訊息裡含 `{source}`,同時又標成 `#[source]`,
   CLI 用 anyhow 印出時會變成「…: No such file」加上「Caused by: No such file」。兩者擇一(建議訊息不含原因,交給原因鏈印)。
   第 8 步做 CLI 時發現,不影響行為。
+- **Mutants (diff) 沒有記憶體上限**(003 第 2 步發現):失控的 mutant(無窮迴圈又一直配置記憶體)會吃光 runner 的記憶體,
+  整個 job 被關掉、沒有任何結果,而不是只有那個 mutant 失敗。這次從 calculator 的 lexer 結構上修掉了;要不要在 workflow 給測試程序
+  記憶體上限(例如 `systemd-run --scope -p MemoryMax=` 或只對測試 binary 設 `ulimit -v`,rustc 本身需要大量虛擬記憶體),等再發生再決定。
 - **呼叫紀錄記上它屬於哪次 agent 執行**(003 design §6):agent 一次執行有好幾次模型呼叫,各自是一筆紀錄,
   目前無法從紀錄看出它們屬於同一次執行(每筆的 request 含到那一輪為止的完整對話,所以最後一筆有全貌)。
   要改 `CallRecord` 的格式(`schema_version` 加一),等 006 分析紀錄時再決定。
