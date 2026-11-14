@@ -201,7 +201,9 @@ mod tests {
                 value: "hello".into()
             }]
         );
-        let Input::Chat(input) = &a.input;
+        let Input::Chat(input) = &a.input else {
+            panic!("expected a chat input");
+        };
         assert_eq!(input.max_tokens, 64);
         assert_eq!(input.messages[0].role, Role::User);
         let b = &ds.cases[1];
@@ -311,14 +313,99 @@ mod tests {
         );
     }
 
+    fn agent(input: serde_json::Value) -> String {
+        serde_json::json!({"id": "a", "input": input, "checks": [{"type": "contains", "value": "x"}]})
+            .to_string()
+    }
+
+    #[test]
+    fn an_agent_case_parses() {
+        let text = agent(serde_json::json!({
+            "type": "agent", "system": "s", "prompt": "幾點?", "tools": ["current_time", "read_file"],
+            "max_tokens": 512, "now": "2026-11-14T02:30:00Z", "root": "fixtures/demo", "max_turns": 4
+        }));
+        let ds = Dataset::parse("ds", text.as_bytes()).unwrap();
+        let Input::Agent(input) = &ds.cases[0].input else {
+            panic!("expected an agent input");
+        };
+        assert_eq!(input.prompt, "幾點?");
+        assert_eq!(input.tools, ["current_time", "read_file"]);
+        assert_eq!(input.root.as_deref(), Some("fixtures/demo"));
+        assert_eq!(input.max_turns, Some(4));
+        assert_eq!(
+            input.now.map(|t| t.to_string()).as_deref(),
+            Some("2026-11-14T02:30:00Z")
+        );
+        // 不給工具也可以(對照組)。
+        let plain = agent(serde_json::json!({"type": "agent", "prompt": "q", "max_tokens": 1}));
+        assert!(Dataset::parse("ds", plain.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn bad_agent_inputs_list_every_problem() {
+        let text = agent(serde_json::json!({
+            "type": "agent", "prompt": " ", "tools": ["calculator", "shell", "calculator", "read_file"],
+            "max_tokens": 0, "max_turns": 0
+        }));
+        assert_eq!(
+            problems(&text),
+            [
+                "line 1 (`a`): the agent prompt must not be empty",
+                "line 1 (`a`): max_tokens must be at least 1",
+                "line 1 (`a`): max_turns must be at least 1",
+                "line 1 (`a`): unknown tool \"shell\"; built-in tools: calculator, current_time, read_file, list_dir",
+                "line 1 (`a`): tool \"calculator\" is listed twice",
+                "line 1 (`a`): read_file and list_dir need a root",
+            ]
+        );
+        let unused = agent(serde_json::json!({
+            "type": "agent", "prompt": "q", "tools": ["calculator"], "max_tokens": 1, "root": "fixtures/demo"
+        }));
+        assert_eq!(
+            problems(&unused),
+            ["line 1 (`a`): root is set but no file tool uses it"]
+        );
+    }
+
+    #[test]
+    fn the_root_must_be_under_fixtures() {
+        for root in [
+            "../secrets",
+            "/etc",
+            "fixtures",
+            "fixtures/../x",
+            "data/x",
+            ".",
+        ] {
+            let text = agent(serde_json::json!({
+                "type": "agent", "prompt": "q", "tools": ["list_dir"], "max_tokens": 1, "root": root
+            }));
+            assert_eq!(
+                problems(&text),
+                [format!(
+                    "line 1 (`a`): root {root:?} must be a relative path under fixtures/, like \"fixtures/<dataset>\""
+                )],
+                "{root}"
+            );
+        }
+        // `fixtures/./x`:`components()` 會拿掉中間的 `.`,等於 `fixtures/x`,一樣安全。
+        for root in ["fixtures/demo", "fixtures/demo/sub", "fixtures/./x"] {
+            let text = agent(serde_json::json!({
+                "type": "agent", "prompt": "q", "tools": ["list_dir"], "max_tokens": 1, "root": root
+            }));
+            assert!(Dataset::parse("ds", text.as_bytes()).is_ok(), "{root}");
+        }
+    }
+
     #[test]
     fn unknown_input_types_and_check_types_are_rejected() {
-        let agent = line("a", CHECK).replace(r#""type":"chat""#, r#""type":"agent""#);
+        // `agent` 在 003 加入了;`retrieval` 要到 004 才有。
+        let retrieval = line("a", CHECK).replace(r#""type":"chat""#, r#""type":"retrieval""#);
         let check = line("b", r#","checks":[{"type":"contians","value":"x"}]"#);
-        let problems = problems(&[agent, check].join("\n"));
+        let problems = problems(&[retrieval, check].join("\n"));
         assert_eq!(problems.len(), 2, "{problems:#?}");
         assert!(
-            problems[0].contains("unknown variant `agent`"),
+            problems[0].contains("unknown variant `retrieval`"),
             "{}",
             problems[0]
         );
@@ -446,7 +533,9 @@ mod tests {
             .unwrap()
             .cases
             .remove(0);
-        let Input::Chat(input) = &case.input;
+        let Input::Chat(input) = &case.input else {
+            panic!("expected a chat input");
+        };
 
         let request = input.to_request("claude-haiku-5-5");
 

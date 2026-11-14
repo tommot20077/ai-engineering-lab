@@ -9,7 +9,10 @@
 
 use std::fmt;
 
-use llm::{Content, Message, ProviderMetadata, Request, Response, ToolDef};
+use std::path::{Component, Path};
+
+use jiff::Timestamp;
+use llm::{Content, Message, ProviderMetadata, Request, Response, ToolDef, Usage};
 use serde::{Deserialize, Serialize};
 
 /// 一個案例:輸入、以及怎麼判斷回答好不好。
@@ -36,7 +39,7 @@ pub struct Case {
     pub reference: Option<String>,
 }
 
-/// 案例的輸入。現在只有一種;003 會加 `Agent`,004 會加 `Retrieval`(D-029)。
+/// 案例的輸入:一次 LLM 呼叫(`Chat`),或一次 agent 執行(`Agent`,003)。004 會加 `Retrieval`(D-029)。
 ///
 /// 加一個 variant 時,compiler 會列出每一個還沒處理它的 `match`。
 /// Java 對照:sealed interface + pattern matching switch,新增 permitted 子類別時沒涵蓋的 switch 會編譯失敗。
@@ -45,6 +48,7 @@ pub struct Case {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Input {
     Chat(ChatInput),
+    Agent(AgentInput),
 }
 
 /// 一次 LLM 呼叫的輸入:`llm::Request` 少了 `model`。
@@ -75,11 +79,104 @@ impl ChatInput {
     }
 }
 
-/// 一次執行的輸出,跟 `Input` 一一對應(D-029):`Input::Chat` 的輸出是 `Output::Chat`。
+/// 內建工具的名稱(`agent::tools`)。`Input::Agent` 的 `tools` 只能寫這些。
+pub const BUILTIN_TOOLS: [&str; 4] = ["calculator", "current_time", "read_file", "list_dir"];
+
+/// 一次 agent 執行的輸入(003 design §9):任務、可以用的內建工具。模型一樣在執行時才決定。
+///
+/// ```json
+/// {"type": "agent", "prompt": "100 天後是幾月幾日?", "tools": ["current_time", "calculator"],
+///  "max_tokens": 2048, "now": "2026-11-14T02:30:00Z"}
+/// ```
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+    /// 交給 agent 的任務(第一則 user 訊息)。
+    pub prompt: String,
+    /// 給 agent 的內建工具。空的 = 不給工具(對照組:同樣的題目、同樣的 loop,只差工具)。
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// 每一輪模型回答的 token 上限。
+    pub max_tokens: u32,
+    /// 固定的時鐘:有「今天」的題目,答案才會每次一樣。沒寫就用真的時間。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub now: Option<Timestamp>,
+    /// 檔案工具的根目錄,相對於資料集檔案所在的目錄,必須在 `fixtures/` 底下。
+    /// 不能是資料集目錄本身:那裡有評分標準,agent 讀得到就能作弊(Harness²)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// 最多幾輪;沒寫用 eval 的預設(`agent_run::EVAL_MAX_TURNS`)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+}
+
+impl AgentInput {
+    /// 檔案工具需要根目錄。
+    pub fn uses_files(&self) -> bool {
+        self.tools
+            .iter()
+            .any(|t| t == "read_file" || t == "list_dir")
+    }
+
+    fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.prompt.trim().is_empty() {
+            problems.push("the agent prompt must not be empty".into());
+        }
+        if self.max_tokens == 0 {
+            problems.push("max_tokens must be at least 1".into());
+        }
+        if self.max_turns == Some(0) {
+            problems.push("max_turns must be at least 1".into());
+        }
+        for (i, tool) in self.tools.iter().enumerate() {
+            if !BUILTIN_TOOLS.contains(&tool.as_str()) {
+                problems.push(format!(
+                    "unknown tool {tool:?}; built-in tools: {}",
+                    BUILTIN_TOOLS.join(", ")
+                ));
+            } else if self.tools.iter().take(i).any(|earlier| earlier == tool) {
+                problems.push(format!("tool {tool:?} is listed twice"));
+            }
+        }
+        match (&self.root, self.uses_files()) {
+            (None, true) => problems.push("read_file and list_dir need a root".into()),
+            (Some(_), false) => problems.push("root is set but no file tool uses it".into()),
+            (Some(root), true) if !is_fixture_dir(root) => problems.push(format!(
+                "root {root:?} must be a relative path under fixtures/, like \"fixtures/<dataset>\""
+            )),
+            _ => {}
+        }
+        problems
+    }
+}
+
+/// `fixtures/<名稱>[/...]`:只有一般的路徑段,第一段是 `fixtures`,至少兩段。
+fn is_fixture_dir(root: &str) -> bool {
+    let parts: Vec<Component> = Path::new(root).components().collect();
+    parts.len() >= 2
+        && parts.first() == Some(&Component::Normal("fixtures".as_ref()))
+        && parts.iter().all(|c| matches!(c, Component::Normal(_)))
+}
+
+/// 一次執行的輸出,跟 `Input` 一一對應(D-029):`Input::Chat` 的輸出是 `Output::Chat`,`Input::Agent` 的是 `Output::Agent`。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Output {
     Chat(Response),
+    Agent(AgentOutput),
+}
+
+/// 一次 agent 執行的結果:怎麼結束的、每一步(含工具的參數與結果)、用量合計。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentOutput {
+    /// 真正回答的模型(最後一步的 `Response.model`;一步都沒有時是請求的名稱)。
+    pub model: String,
+    pub outcome: agent::Outcome,
+    pub steps: Vec<agent::Step>,
+    pub usage: Usage,
 }
 
 impl Output {
@@ -87,6 +184,7 @@ impl Output {
     pub fn model(&self) -> &str {
         match self {
             Output::Chat(response) => &response.model,
+            Output::Agent(output) => &output.model,
         }
     }
 
@@ -104,6 +202,11 @@ impl Output {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
+            // 只有「回答了」才有文字;撞到護欄、失敗、拒答都是空字串,確定性檢查一律不通過(fail-closed)。
+            Output::Agent(output) => match &output.outcome {
+                agent::Outcome::Answered { text } => text.clone(),
+                _ => String::new(),
+            },
         }
     }
 }
@@ -197,6 +300,7 @@ impl Case {
                     problems.push(invalid_request_message(e));
                 }
             }
+            Input::Agent(agent) => problems.extend(agent.problems()),
         }
         problems
     }
@@ -242,6 +346,21 @@ impl fmt::Debug for Case {
             .field("checks", &self.checks.len())
             .field("rubric", &self.rubric.len())
             .field("reference_bytes", &self.reference.as_ref().map(String::len))
+            .finish()
+    }
+}
+
+impl fmt::Debug for AgentInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 跟 `ChatInput` 一樣只印結構:任務與 system prompt 只印長度。
+        f.debug_struct("AgentInput")
+            .field("system_bytes", &self.system.as_ref().map(String::len))
+            .field("prompt_bytes", &self.prompt.len())
+            .field("tools", &self.tools)
+            .field("max_tokens", &self.max_tokens)
+            .field("now", &self.now)
+            .field("root", &self.root)
+            .field("max_turns", &self.max_turns)
             .finish()
     }
 }

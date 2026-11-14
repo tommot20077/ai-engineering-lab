@@ -4,6 +4,7 @@
 //! Eval 不是測試(D-007):測試是確定性的 pass/fail;eval 是對資料集打分、看趨勢。
 
 pub mod add;
+pub mod agent_run;
 pub mod calibration;
 mod case;
 pub mod cli;
@@ -15,5 +16,5 @@ pub mod score;
 pub mod stats;
 pub mod store;
 
-pub use case::{Case, ChatInput, Check, Input, Output};
+pub use case::{AgentInput, AgentOutput, BUILTIN_TOOLS, Case, ChatInput, Check, Input, Output};
 pub use dataset::{Dataset, DatasetError};

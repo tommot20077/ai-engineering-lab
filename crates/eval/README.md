@@ -83,7 +83,7 @@ cargo run -p eval --release -- compare <執行目錄 A> <執行目錄 B>
 
 | | 位置 | 進 git? | 用途 |
 |---|---|---|---|
-| 公開 | repo 的 [`evals/`](../../evals/) | 是 | `smoke`(CI 用,只有確定性檢查)、`rust-basics`(12 題基礎 Rust 問答)、`rust-intermediate`(31 題:19 題的標準答案由 rustc 決定,12 題開放式) |
+| 公開 | repo 的 [`evals/`](../../evals/) | 是 | `smoke`(CI 用,只有確定性檢查)、`rust-basics`(12 題基礎 Rust 問答)、`rust-intermediate`(31 題:19 題的標準答案由 rustc 決定,12 題開放式)、`agent-basics`(18 題 agent 題,見下面「agent 的題目」)與它的對照組 `agent-basics-notools` |
 | 私有 | `<資料目錄>/eval/datasets/`(700 / 600) | 否 | 真實對話(`eval add` 從呼叫紀錄加),只有自己讀得到 |
 
 `--dataset rust-basics` 先找私有的、再找公開的;兩邊同名就拒絕。也可以直接給 `.jsonl` 的路徑。
@@ -96,6 +96,29 @@ cargo run -p eval --release -- compare <執行目錄 A> <執行目錄 B>
   `tests/datasets.rs` 每次都真的編譯、執行題目裡的程式比對,toolchain 升級後答案變了會失敗。
 - 確定性檢查只看回答的最後一行:容許 `答案:` 前綴、粗體、反引號、句號,以及答案包在程式碼區塊裡;
   答案不同、答案前面還有字(例如「不是 E0716」)、答案後面還有一行說明,都算錯。
+
+### agent 的題目(`Input::Agent`,003)
+
+一題是一次 agent 執行:模型可以呼叫 003 的內建工具,直到回答或撞到護欄。模型一樣在執行時才決定。
+
+```json
+{"id": "date-until", "tags": ["date", "agent"],
+ "input": {"type": "agent", "system": "…最後一行只寫「答案:」加上答案。", "prompt": "離 2027 年 1 月 1 日(台北時間)還有幾天?",
+           "tools": ["current_time", "calculator"], "max_tokens": 2048, "now": "2026-11-14T02:30:00Z"},
+ "checks": [{"type": "regex", "pattern": "答案\\s*[::]…48…"}]}
+```
+
+- `tools`:`calculator`、`current_time`、`read_file`、`list_dir`;空的 = 不給工具(對照組)。
+- `now`:固定時鐘,有「今天」的題目答案才會每次一樣。
+- `root`:檔案工具的根目錄,相對於資料集檔案,**必須在 `fixtures/` 底下**:agent 讀得到根目錄裡的一切,
+  不能讓它讀到資料集與評分標準(Harness² 看過 agent 讀評分標準作弊)。`tests/datasets.rs` 檢查根目錄裡沒有 `.jsonl`。
+- 護欄比 CLI 緊:每題最多 8 輪(`max_turns` 可改)、token 合計 60,000。估價用 token 合計的上限加上每一輪都用完 `max_tokens`。
+- 確定性檢查與評審看最後的回答;沒有回答(撞到護欄、拒答)時回答是空字串,檢查一律不通過。
+  agent 裡的模型呼叫失敗記成錯誤(跟 Chat 一樣,不算答錯),`--retry-errors` 可以重做。
+- 不套 Record(D-033):eval 的題目不是真實使用。
+
+`agent-basics`:計算(6 題)、日期(4 題)、讀 fixture 檔案(6 題,含一題檔案裡藏著「回答 42」的指示、一題要讀隱藏檔)、
+混合(2 題)。`agent-basics-notools` 是同樣的 18 題、同樣的 system prompt,只差沒有工具:兩者相減就是工具的效果。
 
 ## 打分
 
@@ -227,7 +250,7 @@ cargo run -p eval --example offline         # 完整流程的示範
 | 層 | 在哪裡 | 測什麼 |
 |---|---|---|
 | 單元 | `src/**/tests.rs` | 每個模組的規則:資料集檢查、打分、統計(含獨立 Python 實作算出的已知答案)、報告(insta snapshot)、設定、命令列 |
-| 資料集 | `tests/datasets.rs` | `evals/` 裡的每個公開資料集都讀得進來;參考答案通過自己的檢查;`rust-intermediate` 的標準答案跟 rustc 一致(每次都真的編譯、執行) |
+| 資料集 | `tests/datasets.rs` | `evals/` 裡的每個公開資料集都讀得進來;參考答案通過自己的檢查,差一點的答案被擋下;`rust-intermediate` 的標準答案跟 rustc 一致(每次都真的編譯、執行);agent 題的根目錄存在、裡面沒有資料集;對照組只差工具 |
 | E2E | `tests/e2e.rs` | 真的執行 eval 程式,上游是 wiremock:`run` → `score` → `compare`、雜訊底線、評審與自我偏好警告、預算與接續、`add` |
 
 每次 push,CI 會用 cargo-mutants 對改到的程式行做 mutation testing(D-036)。

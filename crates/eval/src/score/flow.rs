@@ -363,9 +363,7 @@ fn self_preference(
         .iter()
         .filter_map(|&i| p.responses.get(i))
         .filter_map(|line| match &line.result {
-            CallResult::Ok {
-                output: Output::Chat(response),
-            } => Some(response.model.as_str()),
+            CallResult::Ok { output } => Some(output.model()),
             CallResult::Error { .. } => None,
         })
         .chain([p.run_meta.config.model.as_str()])

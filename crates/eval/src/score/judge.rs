@@ -278,6 +278,18 @@ fn reply_schema() -> Value {
 fn question(input: &Input) -> String {
     match input {
         Input::Chat(chat) => chat_transcript(chat),
+        // agent:評審看任務與有哪些工具;中間的工具呼叫不放(評的是最後的回答,跟 Chat 只看回答一樣)。
+        Input::Agent(agent) => {
+            let mut lines = Vec::new();
+            if let Some(system) = &agent.system {
+                lines.push(format!("[system] {system}"));
+            }
+            lines.push(format!("[user] {}", agent.prompt));
+            if !agent.tools.is_empty() {
+                lines.push(format!("[tools available] {}", agent.tools.join(", ")));
+            }
+            lines.join("\n")
+        }
     }
 }
 
@@ -754,7 +766,9 @@ move 會轉移所有權
     fn the_question_shows_tool_calls_and_results_but_not_thinking() {
         let fake = FakeJudge::new(good);
         let mut c = case(&RUBRIC, None);
-        let Input::Chat(chat) = &mut c.input;
+        let Input::Chat(chat) = &mut c.input else {
+            panic!("expected a chat input");
+        };
         chat.system = None;
         chat.messages = vec![
             Message {
@@ -814,5 +828,32 @@ move 會轉移所有權
 
         assert!((got - expected).abs() < 1e-12, "{got} vs {expected}");
         assert_eq!((j.model(), j.effort()), ("default", "low"));
+    }
+
+    #[test]
+    fn the_judge_sees_the_agent_task_and_its_tools() {
+        let input = Input::Agent(crate::case::AgentInput {
+            system: Some("簡短回答".into()),
+            prompt: "100 天後是幾月幾日?".into(),
+            tools: vec!["current_time".into(), "calculator".into()],
+            max_tokens: 100,
+            now: None,
+            root: None,
+            max_turns: None,
+        });
+        assert_eq!(
+            question(&input),
+            "[system] 簡短回答\n[user] 100 天後是幾月幾日?\n[tools available] current_time, calculator"
+        );
+        let plain = Input::Agent(crate::case::AgentInput {
+            system: None,
+            prompt: "q".into(),
+            tools: vec![],
+            max_tokens: 100,
+            now: None,
+            root: None,
+            max_turns: None,
+        });
+        assert_eq!(question(&plain), "[user] q");
     }
 }

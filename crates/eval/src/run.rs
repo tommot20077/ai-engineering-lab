@@ -18,6 +18,7 @@ use jiff::Timestamp;
 use llm::{LlmError, LlmProvider, RecordedError, Request, Usage};
 use serde::{Deserialize, Serialize};
 
+use crate::agent_run;
 use crate::case::{Case, Input, Output};
 use crate::dataset::{Dataset, DatasetError};
 use crate::store::{CallResult, DatasetInfo, ResponseLine, RunDir, RunMeta, StoreError};
@@ -112,6 +113,9 @@ pub enum RunError {
         expected: String,
         found: String,
     },
+
+    #[error("case `{case}`: the root {} is not a directory", path.display())]
+    MissingRoot { case: String, path: PathBuf },
 }
 
 /// 依設定列出全部的工作:篩選案例,每個案例展開成 `repeats` 次抽樣。順序跟資料集一樣。
@@ -196,6 +200,10 @@ pub fn estimate(dataset: &Dataset, items: &[WorkItem], price: Option<Price>) -> 
 fn worst_case(case: &Case, price: Price) -> f64 {
     match &case.input {
         Input::Chat(chat) => worst_case_request(&chat.to_request("model"), price),
+        Input::Agent(agent) => {
+            let (input, output) = agent_run::worst_case_tokens(agent);
+            (input * price.input + output * price.output) / 1_000_000.0
+        }
     }
 }
 
@@ -261,6 +269,7 @@ pub async fn start(
         git_commit,
         summary: None,
     };
+    check_roots(&dataset, dataset_dir(dataset_path))?;
     let dir = RunDir::create(root, &meta)?;
     let summary = execute(&dir, meta, &dataset, options, false, provider, now).await?;
     Ok((dir, summary))
@@ -286,7 +295,29 @@ pub async fn resume(
             found: dataset.sha256,
         });
     }
+    check_roots(&dataset, dataset_dir(&meta.dataset.path))?;
     execute(&dir, meta, &dataset, options, retry_errors, provider, now).await
+}
+
+/// 資料集檔案所在的目錄:agent 題目的 `root` 以它為準。
+fn dataset_dir(path: &Path) -> &Path {
+    path.parent().unwrap_or(Path::new("."))
+}
+
+/// agent 題目的根目錄都要存在,才開始呼叫模型(fail-closed:不要跑到一半才發現)。
+fn check_roots(dataset: &Dataset, dir: &Path) -> Result<(), RunError> {
+    for case in &dataset.cases {
+        if let Input::Agent(agent) = &case.input
+            && let Some(path) = agent_run::root_of(agent, dir)
+            && !path.is_dir()
+        {
+            return Err(RunError::MissingRoot {
+                case: case.id.clone(),
+                path,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn check_options(options: &ExecOptions) -> Result<(), RunError> {
@@ -318,8 +349,9 @@ async fn execute(
     // 並行(concurrency)不等於平行(parallelism):等網路回應的時候,其他呼叫可以繼續,這就夠了。
     // Java 對照:像是一個固定大小的連線池 + `CompletableFuture`,但不需要額外的執行緒。
     let model = meta.config.model.as_str();
+    let files = dataset_dir(&meta.dataset.path).to_path_buf();
     let mut results = futures::stream::iter(todo)
-        .map(|item| call(item, dataset, model, &options, &spent, provider))
+        .map(|item| call(item, dataset, model, &files, &options, &spent, provider))
         .buffer_unordered(options.concurrency.max(1));
     // 只有這個迴圈寫檔:一次一行,不需要鎖。
     while let Some(line) = results.next().await {
@@ -341,6 +373,7 @@ async fn call(
     item: WorkItem,
     dataset: &Dataset,
     model: &str,
+    dataset_dir: &Path,
     options: &ExecOptions,
     spent: &Spent,
     provider: &dyn LlmProvider,
@@ -352,27 +385,39 @@ async fn call(
     {
         return None;
     }
-    let request = match &case.input {
-        Input::Chat(chat) => chat.to_request(model),
-    };
     let started = tokio::time::Instant::now();
-    let outcome = tokio::time::timeout(options.timeout, provider.complete(request)).await;
+    // 兩種輸入都變成「輸出或錯誤」;逾時、預算、記錄的方式一樣。
+    let outcome = match &case.input {
+        Input::Chat(chat) => {
+            let request = chat.to_request(model);
+            tokio::time::timeout(options.timeout, provider.complete(request))
+                .await
+                .map(|result| {
+                    result
+                        .map(Output::Chat)
+                        .map_err(|e| RecordedError::from(&e))
+                })
+        }
+        // 一題 agent 是好幾次模型呼叫;`options.timeout` 管整題(agent 自己還有總時間的護欄)。
+        Input::Agent(input) => tokio::time::timeout(
+            options.timeout,
+            agent_run::run(input, model, provider, dataset_dir),
+        )
+        .await
+        .map(|result| result.map(Output::Agent).map_err(agent_error)),
+    };
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let (result, cost_usd) = match outcome {
-        Ok(Ok(response)) => {
-            let cost = options.price.map(|price| cost(&response.usage, price));
+        Ok(Ok(output)) => {
+            let cost = options
+                .price
+                .map(|price| cost(output_usage(&output), price));
             if let Some(cost) = cost {
                 spent.add(cost);
             }
-            let output = Output::Chat(response);
             (CallResult::Ok { output }, cost)
         }
-        Ok(Err(error)) => (
-            CallResult::Error {
-                error: RecordedError::from(&error),
-            },
-            None,
-        ),
+        Ok(Err(error)) => (CallResult::Error { error }, None),
         Err(_) => (
             CallResult::Error {
                 error: RecordedError::from(&LlmError::Timeout),
@@ -388,6 +433,30 @@ async fn call(
         latency_ms,
         cost_usd,
     })
+}
+
+/// 輸出的用量:agent 是每一輪的加總。
+fn output_usage(output: &Output) -> &Usage {
+    match output {
+        Output::Chat(response) => &response.usage,
+        Output::Agent(agent) => &agent.usage,
+    }
+}
+
+/// agent 的錯誤記成跟 llm 呼叫失敗同一種格式。`kind` 加一種 `agent_setup`(根目錄、工具組的問題)。
+fn agent_error(error: agent_run::AgentRunError) -> RecordedError {
+    match error {
+        agent_run::AgentRunError::Setup(message) => RecordedError {
+            kind: "agent_setup".into(),
+            status: None,
+            message,
+        },
+        agent_run::AgentRunError::Model(message) => RecordedError {
+            kind: "agent_model".into(),
+            status: None,
+            message,
+        },
+    }
 }
 
 /// 金額加總,從 0.0 開始。
@@ -597,7 +666,9 @@ mod tests {
     fn the_estimate_assumes_every_answer_uses_all_of_max_tokens() {
         let ds = Dataset::parse("ds", line("a", "q", &[]).as_bytes()).unwrap();
         let items = plan(&ds, &config(3));
-        let Input::Chat(input) = &ds.cases[0].input;
+        let Input::Chat(input) = &ds.cases[0].input else {
+            panic!("expected a chat input");
+        };
         // 輸入:請求 JSON 的 bytes ÷ 2 當 token 數(刻意高估);輸出:max_tokens(64)全部用完。
         let input_tokens = serde_json::to_vec(&input.to_request("cheap"))
             .unwrap()

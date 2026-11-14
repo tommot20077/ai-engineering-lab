@@ -256,6 +256,18 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
   要讀 fixture 檔案才答得出來的題目。
 - 真的跑一次:Haiku 對 Sonnet(都給工具),以及 Haiku 給工具對不給工具(同樣的題目用 `Input::Chat`)。
 
+### 實作時定下的(第 6 步,eval 的 `case.rs`、`agent_run.rs`、`run.rs`)
+
+- **D-029 的承諾成立**:加上 `Input::Agent` / `Output::Agent` 之後,compiler 列出 library 裡剛好 4 個沒處理的 `match`
+  (執行、估價、評審的題目、打分流程的自我偏好)和測試裡 6 個 `let Input::Chat(..) = ..`(只剩一種 variant 時才能這樣寫)。
+- agent 改成**借用** provider(`Agent<'p>`,獨立的 commit):eval 的執行器手上只有 `&dyn LlmProvider`,借來的參考變不成 `Arc`。
+- 每題的護欄比 CLI 緊:最多 8 輪、token 合計 60,000;`options.timeout` 管整題。
+- agent 裡的模型呼叫失敗記成錯誤(`kind: "agent_model"`),不算答錯;根目錄、工具組的問題是 `agent_setup`。
+  根目錄在開始前全部檢查,不存在就整次不執行。
+- `root` 必須是 `fixtures/<名稱>[/…]`(只有一般的路徑段)。`fixtures/./x` 等於 `fixtures/x`(`components()` 會拿掉中間的 `.`)。
+- 對照組是另一個資料集 `agent-basics-notools`:同樣的題目、system prompt、時鐘、檢查,只有 `tools: []`。
+  用同一個 agent loop,差異才只來自工具(用 `Input::Chat` 當對照會連 loop 都不一樣)。
+
 ## 10. 已決定的小事(2026-11-14,使用者確認,都照建議)
 
 1. **加 `list_dir`**(建議加):只讀、跟 `read_file` 共用路徑檢查;沒有它,模型只能猜檔名。
@@ -275,7 +287,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 | 3 | `read_file`、`list_dir` **(完成)** | `Path` / `PathBuf` / `Component`、`canonicalize`、symlink 測試、`#[cfg(unix)]` |
 | 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應)**(完成)** | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
 | 5 | 軌跡、CLI、`agent.toml`、Record、E2E(wiremock 多輪)、crate README、`examples/` **(完成)** | serde tagged enum、clap、composition root |
-| 6 | eval `Input::Agent`、`agent-basics` 資料集、E2E | 加 enum variant 跟著 compiler 錯誤走 |
+| 6 | eval `Input::Agent`、`agent-basics` 資料集 **(完成)** | 加 enum variant 跟著 compiler 錯誤走 |
 | 7 | 真的跑(§9),結果寫進 README;retro | — |
 
 ## 12. 不在第一部分

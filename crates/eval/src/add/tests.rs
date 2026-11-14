@@ -212,7 +212,9 @@ fn the_request_becomes_the_input_without_the_model() {
     assert!(case.checks.is_empty());
     // 沒有 --keep-answer:不帶原本的回答。
     assert_eq!(case.reference, None);
-    let Input::Chat(input) = &case.input;
+    let Input::Chat(input) = &case.input else {
+        panic!("expected a chat input");
+    };
     // 送出去的請求(換上任何模型)跟原本的一模一樣:system、messages、tools、max_tokens、provider_options 都在。
     assert_eq!(input.to_request("cheap"), r.request);
 }
