@@ -60,7 +60,8 @@
   **結果**:給工具 38.9% → 100%(+61.1 [+38.9, +83.3],全部來自日期與檔案題);Haiku 對 Sonnet 18/18 對 18/18(天花板,A/A 也是 0),
   Sonnet 貴 17.7 倍;injection 沒成功;真的跑抓到 001 的 bug(沒有參數片段的工具呼叫組成空字串,修在 `Accumulator`)。花 $0.158。
 - **003 第二部分(MCP client)**:設計已定案 `docs/modules/003-agent-runtime/design-part2.md`(D-047~D-051,§9 五個小決定都照建議)。
-- **下一步**:003 第二部分第 1 步:`crates/mcp` 骨架與 JSON-RPC 訊息型別。
+- 第二部分完成到第 1 步:`crates/mcp` 骨架與 JSON-RPC 訊息型別。
+- **下一步**:003 第二部分第 2 步:stdio 傳輸 + 測試用的 MCP server(stdio)。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理

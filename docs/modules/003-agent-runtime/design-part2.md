@@ -52,6 +52,15 @@ crates/agent/src/tools/mcp.rs   McpTool:實作 ErasedTool(驗證參數、轉換�
 - 錯誤碼:`-32700` 解析錯誤、`-32600` 請求不合法、`-32601` 方法不存在、`-32602` 參數不合法、`-32603` 內部錯誤。
 - server 送來 client 不認得的請求(sampling 之類):回 `-32601`。不認得的通知:略過。
 
+**實作時定下的(第 1 步,`jsonrpc.rs`)**:
+
+- 送出的三種訊息共用一個 `Outgoing` struct,沒有的欄位不輸出;serde_json 的緊湊格式保證一行(字串裡的換行被跳脫)。
+- 收到的訊息不用 derive 一次解析:「`result` 與 `error` 恰好一個」serde 的屬性表達不了,`"result": null` 與「沒有 `result`」
+  用 `Option<Value>` 也分不出來。先解析成 JSON 物件、逐條檢查,通過才變成 `Incoming`。
+- 拒絕:不是物件(批次的陣列也不收,MCP 不支援)、`jsonrpc` 不是 `"2.0"`、`id` 不是整數或字串(含 `null`、小數)、
+  沒有 `id` 的回應(不知道回哪個請求)、`params` 不是物件或陣列、請求帶 `result` / `error`、`error` 物件缺 `code` 或 `message`。
+  規格之外的頂層欄位略過(往後相容)。
+
 **MCP 的流程**:
 
 ```
@@ -143,7 +152,7 @@ tools = ["lookup"]
 
 | # | 內容 | 主要 Rust 概念 |
 |---|---|---|
-| 1 | `crates/mcp` 骨架、JSON-RPC 訊息型別 | serde 的 `untagged` enum、`#[serde(flatten)]` |
+| 1 | `crates/mcp` 骨架、JSON-RPC 訊息型別 **(完成)** | serde 的 `untagged` enum、`#[serde(flatten)]` |
 | 2 | stdio 傳輸 + 測試 server(stdio) | `tokio::process`、背景 task、`oneshot`、`HashMap<id, Sender>`、`kill_on_drop` |
 | 3 | `McpClient`:initialize、版本協商、tools/list 分頁、tools/call | async 的狀態流程、錯誤分類 |
 | 4 | HTTP 傳輸 + 測試 server(HTTP) | reqwest 不跟 redirect、SSE 串流裡找回應、同一組測試跑兩種傳輸 |
