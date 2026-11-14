@@ -245,3 +245,18 @@ proptest! {
         );
     }
 }
+
+#[test]
+fn the_standard_error_codes_are_the_ones_in_the_spec() {
+    // 數值由 JSON-RPC 2.0 規格決定;寫錯的話,對方看到的錯誤種類就錯了(cargo-mutants:拿掉負號沒有測試失敗)。
+    assert_eq!(
+        [
+            PARSE_ERROR,
+            INVALID_REQUEST,
+            METHOD_NOT_FOUND,
+            INVALID_PARAMS,
+            INTERNAL_ERROR
+        ],
+        [-32700, -32600, -32601, -32602, -32603]
+    );
+}
