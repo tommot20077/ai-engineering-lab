@@ -1,7 +1,7 @@
 # 003 Agent Runtime — 設計(第一部分:agent loop 與內建工具)
 
-> 狀態:**已定案(2026-11-14)**。四個分岔由使用者選定(D-041 ~ D-045,記在 ROADMAP 決策表);
-> §10 的五個小決定都照建議。
+> 狀態:**已定案(2026-11-14)、第一部分完成(2026-11-14)**。四個分岔由使用者選定(D-041 ~ D-045,記在 ROADMAP 決策表);
+> §10 的五個小決定都照建議;實作時加了 D-046(agent 借用 provider)。回顧見 [`retro.md`](retro.md)。
 
 ## 1. 要解決什麼
 
@@ -288,7 +288,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 | 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應)**(完成)** | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
 | 5 | 軌跡、CLI、`agent.toml`、Record、E2E(wiremock 多輪)、crate README、`examples/` **(完成)** | serde tagged enum、clap、composition root |
 | 6 | eval `Input::Agent`、`agent-basics` 資料集 **(完成)** | 加 enum variant 跟著 compiler 錯誤走 |
-| 7 | 真的跑(§9),結果寫進 README;retro | — |
+| 7 | 真的跑(§9),結果寫進 README;retro **(完成,見 crate README「第一次真的跑」)** | — |
 
 ## 12. 不在第一部分
 

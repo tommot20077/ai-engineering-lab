@@ -255,6 +255,11 @@ cargo run -p eval --example offline         # 完整流程的示範
 
 每次 push,CI 會用 cargo-mutants 對改到的程式行做 mutation testing(D-036)。
 
+## agent 題的比較(003)
+
+`agent-basics` 的第一次真的執行(給工具 +61.1 個百分點;Haiku 對 Sonnet 量不出差別)寫在
+[`crates/agent/README.md`「第一次真的跑」](../agent/README.md#第一次真的跑2026-11-14003-第-7-步)。
+
 ## 第一次真的比較
 
 2026-11-11,真的呼叫 Claude API。**一句話:這份資料集分不出兩個模型——兩邊都全部通過;不是「一樣好」,是「這 12 題量不出差別」。**
