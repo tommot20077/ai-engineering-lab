@@ -23,10 +23,13 @@ futures.workspace = true
 jiff.workspace = true
 # 每次執行的 id(UUID v7,開頭是時間)。
 uuid.workspace = true
+# 護欄的計時:總時間的截止點(`timeout_at`)、每次工具呼叫的時間上限(`timeout`)。測試裡可以暫停時間。
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 # `#[tokio::test]`:工具的 `call` 是 async,測試要有 runtime 才能 `.await`。
-tokio = { workspace = true, features = ["macros", "rt"] }
+# test-util:`start_paused`,逾時與並行的測試不必真的等。
+tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }
 # 鎖住送給模型的工具定義(名稱、說明、schema),改了要人看過 diff 才接受。
 insta.workspace = true
 # calculator 的 parser:任意輸入都不 panic;整數運算跟 i64 的結果一樣。

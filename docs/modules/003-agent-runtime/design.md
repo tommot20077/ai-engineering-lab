@@ -127,7 +127,7 @@ let finished = run.finish();                           // Outcome、全部的 St
 
 **工具執行**:
 
-- 同一輪的多個呼叫並行執行(上限 `max_parallel`),結果照原本的順序排回去(`buffered`,不是 `buffer_unordered`)。
+- 同一輪的多個呼叫並行執行(上限 `max_parallel`),結果照原本的順序排回去。實作用 `buffer_unordered` + 依位置排序,不用 `buffered`:`buffered` 把「好了但還沒輪到交出」的結果也算進名額,前面一個慢的工具會擋住後面的開始(第 4 步的計時測試抓到:3、1、2、1 秒的四個工具、並行 2,`buffered` 要 5 秒、現在 4 秒)。
 - 每次呼叫有時間上限;超過就回 `is_error`。
 - 參數字串先檢查長度(上限 64 KiB)再解析;結果超過上限(32 KiB)就截斷,加上「已截斷 N bytes」的標記(切在 UTF-8 字元邊界)。
 - thinking 區塊(含簽章)跟著 assistant 訊息原封不動接回去:Anthropic 規定用工具時要這樣做。整則 `content` 直接放回去就滿足。
@@ -151,6 +151,16 @@ pub enum Outcome {
     Failed(AgentError),   // 模型呼叫失敗(Retry 之後)、停止原因不對、前後矛盾
 }
 ```
+
+### 實作時定下的(第 4 步,`run.rs`、`limits.rs`)
+
+- `Run::next()` 回傳 `Option<Step>`;`finish(self)` 拿到 `Finished`(結果、全部的 Step、用量合計)。結束之前呼叫 `finish` 記成 `Outcome::Stopped`。
+- 一步 = 一次成功的模型呼叫,所以「輪數」就是 Step 的數量。模型呼叫失敗、撞到輪數 / token / 時間的護欄時沒有 Step。
+- 同一輪的工具呼叫 id 重複、或跟之前的輪重複:整輪不執行、失敗。
+- 參數先看長度(上限 64 KiB)、工具逾時、找不到工具、參數錯、工具失敗,全部變成 `is_error: true` 的結果,執行繼續。
+- token 合計包含 cache 的讀寫(都要處理);只能事後知道,所以最多超出一輪。
+- `AgentLimits` 每一項至少是 1,`Agent::new` 一次列出全部是 0 的欄位(0 等於關掉功能)。
+- `Outcome`、`AgentFailure` 序列化成帶 `kind` / `reason` 的 JSON,軌跡直接用。
 
 ## 6. 軌跡
 
@@ -252,7 +262,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 | 1 | crate 骨架、`Tool` / `ErasedTool` / `Toolbox`、`current_time` **(完成)** | 關聯型別、trait 回傳 `impl Future`、blanket impl 做型別抹除、schemars derive、insta 鎖 schema |
 | 2 | `calculator` **(完成)** | `Peekable<Chars>` 寫 lexer、Pratt parser(binding power)、遞迴深度上限、proptest |
 | 3 | `read_file`、`list_dir` **(完成)** | `Path` / `PathBuf` / `Component`、`canonicalize`、symlink 測試、`#[cfg(unix)]` |
-| 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應) | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
+| 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應)**(完成)** | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
 | 5 | 軌跡、CLI、`agent.toml`、Record、E2E(wiremock 多輪)、crate README、`examples/` | serde tagged enum、clap、composition root |
 | 6 | eval `Input::Agent`、`agent-basics` 資料集、E2E | 加 enum variant 跟著 compiler 錯誤走 |
 | 7 | 真的跑(§9),結果寫進 README;retro | — |
