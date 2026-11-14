@@ -1,7 +1,7 @@
 # 003 Agent Runtime 第二部分 — MCP client
 
-> 狀態:**草稿(2026-11-14)**。五個分岔已由使用者選定(D-047 ~ D-051,記在 ROADMAP 決策表);
-> §9 的小決定等使用者逐一確認。第一部分見 [`design.md`](design.md)、[`retro.md`](retro.md)。
+> 狀態:**已定案(2026-11-14)**。五個分岔由使用者選定(D-047 ~ D-051,記在 ROADMAP 決策表);
+> §9 的五個小決定逐一確認,都照建議。第一部分見 [`design.md`](design.md)、[`retro.md`](retro.md)。
 
 ## 1. 要解決什麼
 
@@ -150,7 +150,7 @@ tools = ["lookup"]
 | 5 | agent 整合:`McpTool`、`[[mcp]]` 設定、白名單、E2E | `jsonschema` 編譯一次重複用、`Box<dyn ErasedTool>` 混著內建與 MCP 工具 |
 | 6 | 對真的參考 server 跑一次(`#[ignore]`)、README、retro | — |
 
-## 9. 待你確認(附建議)
+## 9. 已決定的小事(2026-11-14,使用者逐一確認,都照建議)
 
 1. **協定放獨立的 `crates/mcp`**(建議):agent 依賴它;`McpTool` 放 agent。另一個做法是放在 agent 裡面的 module,但 005 或 gateway 要用時得拆。
 2. **協定版本只支援一個(當時規格的最新版),server 不同意就拒絕**(建議):規格每次改版都有行為差異,只支援驗證過的那一版。
