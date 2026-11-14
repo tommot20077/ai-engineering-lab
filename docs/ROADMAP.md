@@ -55,8 +55,8 @@
   **結果**:評審可信(Opus、Sonnet 抓到 35/35,Haiku 33/35;對照組 0 冤枉;injection 0/4);`rust-intermediate` 上 Haiku 87.1% 對 Sonnet 96.8%
   (+9.7 [+0.0, +22.6]),但 A/A 就有 +6.5、3 題翻轉裡 2 題在 A/A 也翻轉 → **仍然分不出兩個模型**;三個評審逐條 100% 一致。評審維持 Sonnet。花 $1.11。
 - **模組 003 Agent runtime**(2026-11-12 開始):設計 `docs/modules/003-agent-runtime/design.md`(已定案,D-041~D-045)。
-  第一部分完成到第 4 步:`crates/agent` 骨架、工具介面(`Tool` / `ErasedTool` / `Toolbox`)、`current_time`、`calculator`、`read_file` / `list_dir`、agent loop(`Agent` / `Run`)。
-- **下一步**:003 第 5 步,軌跡、CLI(`agent run`)、`agent.toml`、Record、E2E、crate README。
+  第一部分完成到第 5 步:`crates/agent` 骨架、工具介面(`Tool` / `ErasedTool` / `Toolbox`)、`current_time`、`calculator`、`read_file` / `list_dir`、agent loop(`Agent` / `Run`)、軌跡、CLI(`agent run`,套 Record)、crate README。
+- **下一步**:003 第 6 步,eval 的 `Input::Agent` 與 `agent-basics` 資料集。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -121,7 +121,7 @@
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 完成:第一部分(第 1~11 步,第一次真的比較)、第二部分(資料集與評審校準,第二次比較);回顧見 `retro.md` |
-| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 進行中:第一部分(loop + 內建工具)第 4 步完成;分三部分(D-041) |
+| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 進行中:第一部分(loop + 內建工具)第 5 步完成;分三部分(D-041) |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
 
@@ -193,7 +193,8 @@
 - **零變異時信賴區間顯示成 `[+0.0, +0.0]`**:所有配對的差都是 0 時,paired bootstrap 退化成寬度 0 的區間,
   容易被讀成「確定沒差」(報告只有「配對少於 30 個」的警告)。要不要在報告上特別標示(例如「所有配對都相同:區間無資訊」),
   是顯示方式的設計選擇,等使用者決定。尚未改。
-- **私有目錄與「處理寫了一半的行」有兩份**:llm `JsonlWriter`(私有函式)與 eval `store.rs` 各寫了一份(約 20 行)。
+- **私有目錄與「處理寫了一半的行」有三份**:llm `JsonlWriter`(私有函式)、eval `store.rs`、agent `trajectory.rs`(003 第 5 步)各寫了一份(約 20 行)。
+  已經到了「出現第三個使用者就抽出來」的條件;抽到哪裡(config-loader 或新的小 crate)要決定,另外做一個 commit。
   注意兩邊對半行的處理不同:llm 補換行封住(讀取端跳過壞行,D-021);eval 截掉(讀取端把中間的壞行當成檔案損壞而報錯)。
   出現第三個使用者時(例如 006 的紀錄分析),抽成共用的小工具;規則一樣:目錄 700、檔案 600、別人讀得到就拒絕。
 - **錯誤訊息裡的原因印了兩次**:eval 的 `StoreError::Io`、`DatasetError::Read` 的訊息裡含 `{source}`,同時又標成 `#[source]`,

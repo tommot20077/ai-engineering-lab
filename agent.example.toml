@@ -1,0 +1,44 @@
+# agent 設定檔範例。複製一份再改:cp agent.example.toml agent.toml
+# agent.toml 不進 git。API key 不放這裡,放 .env 的 ANTHROPIC_API_KEY(同 gateway、eval)。
+# 打錯的欄位名稱會讓 agent 拒絕執行,不會被默默忽略。
+
+# 必填,至少一個。`--model`、`[agent] model` 只能寫這裡的別名。
+# 跟 gateway.toml、eval.toml 各自一份;011 的執行中路由表出現後再考慮共用。
+[aliases]
+default = "claude-sonnet-5-5"
+cheap   = "claude-haiku-5-5"
+
+[anthropic]
+# 預設 https://api.anthropic.com。只有 localhost 可以用 http(給測試用的假 server)。
+# base_url = "https://api.anthropic.com"
+
+[agent]
+# `--model` 沒給時用的別名。
+model = "default"
+# 每一輪模型回答的 token 上限。
+max_tokens = 4096
+
+# 護欄(design §5)。每一項至少是 1:可以調整,不能關掉。沒寫的用下面的預設值。
+[limits]
+# max_turns = 10              # 最多呼叫模型幾次
+# max_tool_calls = 30         # 整次執行最多幾次工具呼叫
+# max_parallel = 4            # 同一輪最多同時執行幾個工具
+# max_total_tokens = 200000   # 每輪 input + output 的加總上限(每輪都重送整段對話)
+# deadline_secs = 300         # 整次執行的總時間
+# tool_timeout_secs = 30      # 每次工具呼叫的時間上限
+# max_result_bytes = 32768    # 工具結果超過就截斷
+# max_args_bytes = 65536      # 工具參數超過就不解析
+
+[paths]
+# 軌跡(每次執行一個 JSONL 檔)放在 <data_dir>/runs(700 / 600)。預設:
+#   macOS ~/Library/Application Support/ai-engineering-lab/agent
+#   Linux ~/.local/share/ai-engineering-lab/agent
+# 相對路徑以「這個設定檔所在的目錄」為準。
+# data_dir = "~/ai-lab-agent"
+# 呼叫紀錄(階段 2 的原料)。預設跟 gateway 一樣,飛輪讀同一個地方;gateway.toml 改過 [record] dir 的話這裡也要改。
+# records = "~/ai-lab-records"
+
+# 每百萬 token 的美元價格,key 是實際的模型 id(不是別名)。有價格才顯示費用,沒有就顯示「未知」。
+# [prices."claude-sonnet-5-5"]
+# input = 2.0
+# output = 10.0

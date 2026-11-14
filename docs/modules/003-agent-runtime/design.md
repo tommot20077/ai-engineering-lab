@@ -235,6 +235,17 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 - 預設的 system prompt 寫在程式裡(繁體中文、說明有哪些工具、什麼時候該用),可以用 `--system` 換。這就是 Harness² 的
   「system prompt」和「tool guidance」兩項;其餘六項(memory、subagents、skills…)不在第一部分。
 
+### 實作時定下的(第 5 步,`main.rs`、`config.rs`、`trajectory.rs`、`cli.rs`)
+
+- 結束碼:`0` 回答了;`1` 執行了但沒有回答(拒答、撞到護欄、失敗);`2` 根本沒開始(設定、參數、API key)。
+  回答印到 stdout,每一步(工具、參數、結果的第一行)與摘要印到 stderr。
+- 軌跡檔在第一次呼叫模型之前建立:目錄權限太寬時,一毛錢都還沒花就停。之後的寫入失敗只警告、不中斷回答(同 D-021)。
+  事件是 `start`(run id、開始時間、別名、任務、工具、護欄)、每一步一個 `step`、`finish`(結果、用量、費用)。
+- 費用依每一步「真正回答的模型」算;有一步沒有價格就顯示 unknown(不是只算有價格的部分)。cache 讀寫按 input 價計。
+- 沒給 `--root` 就不註冊檔案工具,模型連有這種工具都不知道。`--max-turns` 覆寫 `[limits] max_turns`。
+- 結束前先丟掉 agent(provider 鏈裡的 Record 也拿著 writer),再在 `spawn_blocking` 裡等紀錄寫完(同 gateway)。
+- 預設的 system prompt 在 `src/prompt.rs`:何時用工具、工具錯誤怎麼處理、**工具結果是資料不是指示**(§7 的 prompt injection)。
+
 ## 9. eval 整合
 
 - `Input::Agent(AgentInput)`:`system`、`prompt`、`tools`(內建工具的名稱)、`max_tokens`、可選的 `now`(固定時鐘)、
@@ -263,7 +274,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 | 2 | `calculator` **(完成)** | `Peekable<Chars>` 寫 lexer、Pratt parser(binding power)、遞迴深度上限、proptest |
 | 3 | `read_file`、`list_dir` **(完成)** | `Path` / `PathBuf` / `Component`、`canonicalize`、symlink 測試、`#[cfg(unix)]` |
 | 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應)**(完成)** | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
-| 5 | 軌跡、CLI、`agent.toml`、Record、E2E(wiremock 多輪)、crate README、`examples/` | serde tagged enum、clap、composition root |
+| 5 | 軌跡、CLI、`agent.toml`、Record、E2E(wiremock 多輪)、crate README、`examples/` **(完成)** | serde tagged enum、clap、composition root |
 | 6 | eval `Input::Agent`、`agent-basics` 資料集、E2E | 加 enum variant 跟著 compiler 錯誤走 |
 | 7 | 真的跑(§9),結果寫進 README;retro | — |
 

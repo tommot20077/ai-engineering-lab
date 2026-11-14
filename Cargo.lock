@@ -6,6 +6,10 @@ version = 4
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "config-loader",
+ "dotenvy",
  "futures",
  "insta",
  "jiff",
@@ -17,7 +21,9 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "toml",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

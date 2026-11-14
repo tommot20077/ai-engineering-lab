@@ -24,15 +24,28 @@ jiff.workspace = true
 # 每次執行的 id(UUID v7,開頭是時間)。
 uuid.workspace = true
 # 護欄的計時:總時間的截止點(`timeout_at`)、每次工具呼叫的時間上限(`timeout`)。測試裡可以暫停時間。
-tokio = { workspace = true, features = ["time"] }
+# rt-multi-thread + macros:binary 的 `#[tokio::main]`;關機時用 `spawn_blocking` 等紀錄寫完。
+tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
+# ---- 以下給 CLI(composition root)用 ----
+# 讀 agent.toml、預設資料目錄、從環境變數讀 API key(規則跟 gateway、eval 一樣,D-025)。
+config-loader = { path = "../config-loader" }
+clap.workspace = true
+anyhow.workspace = true
+# 讀 .env 是 binary 的事(D-016)。
+dotenvy.workspace = true
 
 [dev-dependencies]
 # `#[tokio::test]`:工具的 `call` 是 async,測試要有 runtime 才能 `.await`。
 # test-util:`start_paused`,逾時與並行的測試不必真的等。
-tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }
+# process:E2E 以子行程執行 agent binary。
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util", "process"] }
 # 鎖住送給模型的工具定義(名稱、說明、schema),改了要人看過 diff 才接受。
 insta.workspace = true
 # calculator 的 parser:任意輸入都不 panic;整數運算跟 i64 的結果一樣。
 proptest.workspace = true
 # 檔案工具的測試:真的建目錄、檔案、symlink,測試結束自動刪除。
 tempfile.workspace = true
+# 設定檔的測試直接解析 TOML 字串。
+toml.workspace = true
+# E2E(tests/e2e.rs):wiremock 扮演上游的 Claude;以子行程執行 agent binary。
+wiremock.workspace = true
