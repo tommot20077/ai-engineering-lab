@@ -31,3 +31,5 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 insta.workspace = true
 # calculator 的 parser:任意輸入都不 panic;整數運算跟 i64 的結果一樣。
 proptest.workspace = true
+# 檔案工具的測試:真的建目錄、檔案、symlink,測試結束自動刪除。
+tempfile.workspace = true

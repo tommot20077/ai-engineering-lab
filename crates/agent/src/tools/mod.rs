@@ -2,6 +2,8 @@
 
 mod calculator;
 mod clock;
+mod files;
 
 pub use calculator::{Calculator, CalculatorArgs};
 pub use clock::{CurrentTime, CurrentTimeArgs};
+pub use files::{ListDir, ListDirArgs, ReadFile, ReadFileArgs, Root};

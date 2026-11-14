@@ -1,0 +1,39 @@
+---
+source: crates/agent/src/tools/files/tests.rs
+expression: "ReadFile::new(f.root.clone()).def()"
+---
+{
+  "name": "read_file",
+  "description": "讀取一個文字檔,每行前面加上行號。只能讀允許的目錄底下的檔案;不知道檔名時先用 list_dir。檔案很長時用 offset 與 limit 分段讀。",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "description": "最多讀幾行。省略時讀到檔尾。",
+        "format": "uint64",
+        "minimum": 1,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "offset": {
+        "description": "從第幾行開始(從 1 算)。省略時從第 1 行。",
+        "format": "uint64",
+        "minimum": 1,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "path": {
+        "description": "檔案路徑,相對於允許的目錄,例如 \"notes/todo.md\"。",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  }
+}

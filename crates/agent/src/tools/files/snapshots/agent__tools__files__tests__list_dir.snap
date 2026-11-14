@@ -1,0 +1,21 @@
+---
+source: crates/agent/src/tools/files/tests.rs
+expression: "ListDir::new(f.root.clone()).def()"
+---
+{
+  "name": "list_dir",
+  "description": "列出目錄裡的檔案與子目錄(子目錄名稱後面有 /)。只能看允許的目錄底下;以 . 開頭的隱藏檔不會列出。",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "目錄路徑,相對於允許的目錄。省略時列出允許的目錄本身。",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "type": "object"
+  }
+}

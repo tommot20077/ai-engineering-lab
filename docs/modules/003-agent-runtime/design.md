@@ -197,6 +197,18 @@ pub enum Outcome {
   但不在這部分。
 - 測試:用 tempfile 建目錄,真的建 symlink(`#[cfg(unix)]`),驗證跳出目錄的每一種寫法都被擋。
 
+**檔案工具實作時定下的(第 3 步,`tools/files.rs`)**:
+
+- 規則集中在 `Root::resolve`,兩個工具共用。兩關:先只看字串(`components()`:`..`、絕對路徑、`.` 開頭的段一律拒絕,
+  留在裡面的 `..` 也不收);再看檔案系統(`canonicalize` 解開 symlink,`strip_prefix` 確認還在根目錄底下,
+  解開之後的每一段也不能以 `.` 開頭:`notes -> .env` 也擋)。
+- 錯誤訊息只寫模型給的相對路徑,不寫絕對路徑。路徑寫錯是 `InvalidArgs`;找不到、太大、不是 UTF-8 是 `Failed`。
+- 讀檔不信 metadata 的大小:最多讀上限 + 1 byte,讀到超過就拒絕(檢查之後檔案可能變大)。
+- `read_file` 輸出帶行號;只讀一部分時最後註明「第幾行到第幾行,共幾行」。schema 用 `range(min = 1)` 寫上 `offset`、`limit`
+  的最小值,跟程式拒絕 0 的規則一致(schemars 從 `u64` 推出的最小值是 0,第一次 snapshot 抓到的不一致)。
+- `list_dir` 排序、不列隱藏檔、目錄名稱加 `/`(不跟著 symlink 判斷)、最多 500 項。
+- 用同步的檔案 API:檔案最大 256 KiB、在本機,不值得為它開執行緒。
+
 **工具結果也是不可信輸入**:檔案內容可能寫著「忽略之前的指示」。第一部分的工具都不能寫入、不能連網,
 被騙最多是答錯,沒有把資料送出去的管道。有網路工具之後(之後的部分)要重新評估。
 
@@ -239,7 +251,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 |---|---|---|
 | 1 | crate 骨架、`Tool` / `ErasedTool` / `Toolbox`、`current_time` **(完成)** | 關聯型別、trait 回傳 `impl Future`、blanket impl 做型別抹除、schemars derive、insta 鎖 schema |
 | 2 | `calculator` **(完成)** | `Peekable<Chars>` 寫 lexer、Pratt parser(binding power)、遞迴深度上限、proptest |
-| 3 | `read_file`、`list_dir` | `Path` / `PathBuf` / `Component`、`canonicalize`、symlink 測試、`#[cfg(unix)]` |
+| 3 | `read_file`、`list_dir` **(完成)** | `Path` / `PathBuf` / `Component`、`canonicalize`、symlink 測試、`#[cfg(unix)]` |
 | 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應) | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
 | 5 | 軌跡、CLI、`agent.toml`、Record、E2E(wiremock 多輪)、crate README、`examples/` | serde tagged enum、clap、composition root |
 | 6 | eval `Input::Agent`、`agent-basics` 資料集、E2E | 加 enum variant 跟著 compiler 錯誤走 |
