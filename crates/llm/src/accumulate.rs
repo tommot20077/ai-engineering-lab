@@ -95,7 +95,11 @@ impl Block {
             Body::ToolCall { id, name, args } => Content::ToolCall {
                 id,
                 name,
-                args_json: args,
+                // 沒收到任何參數片段 = 沒有參數 = 空物件。Anthropic 對不需要參數的工具,串流裡只有
+                // `content_block_start`(帶 `"input": {}`)和 `content_block_stop`,一個 `input_json_delta` 都沒有;
+                // 照字面拼接會得到空字串,下一輪把對話送回去時就不是合法的 JSON(003 第 7 步真的跑才發現)。
+                // 規則放在這個中立的地方:不管哪家 provider,工具參數永遠是一個 JSON 物件。
+                args_json: if args.is_empty() { "{}".into() } else { args },
                 meta: self.meta,
             },
         }
@@ -393,6 +397,34 @@ mod tests {
         );
         assert_eq!(resp.stop.kind, StopKind::EndTurn);
         assert_eq!(resp.usage.output_tokens, 5);
+    }
+
+    #[test]
+    fn a_tool_call_without_argument_fragments_has_an_empty_object() {
+        let resp = run(vec![
+            start(),
+            StreamEvent::ToolCallStart {
+                index: 0,
+                id: "c1".into(),
+                name: "list_dir".into(),
+                meta: meta(),
+            },
+            StreamEvent::ToolCallEnd {
+                index: 0,
+                meta: meta(),
+            },
+            finish(StopKind::ToolUse, "tool_use"),
+        ])
+        .unwrap();
+        assert_eq!(
+            resp.content,
+            vec![Content::ToolCall {
+                id: "c1".into(),
+                name: "list_dir".into(),
+                args_json: "{}".into(),
+                meta: meta(),
+            }]
+        );
     }
 
     #[test]

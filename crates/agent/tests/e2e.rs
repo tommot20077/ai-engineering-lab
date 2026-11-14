@@ -30,6 +30,8 @@ const PATIENCE: Duration = Duration::from_secs(60);
 /// `looping` 時永遠要求呼叫工具(每次一個新的 id),用來測護欄。
 struct FakeClaude {
     looping: bool,
+    /// 要求呼叫不需要參數的 `list_dir`:串流裡沒有任何 `input_json_delta`(Anthropic 對空參數就是這樣送)。
+    no_args: bool,
     calls: AtomicUsize,
 }
 
@@ -45,6 +47,14 @@ impl Respond for FakeClaude {
             .any(|block| block["type"] == "tool_result");
         if has_result && !self.looping {
             text_sse("6 乘 7 等於 42。")
+        } else if self.no_args {
+            sse(&[
+                start(),
+                json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "tool_use", "id": format!("toolu_{n}"), "name": "list_dir", "input": {} } }),
+                json!({ "type": "content_block_stop", "index": 0 }),
+                json!({ "type": "message_delta", "delta": { "stop_reason": "tool_use" }, "usage": { "output_tokens": 20 } }),
+                json!({ "type": "message_stop" }),
+            ])
         } else {
             tool_sse(
                 &format!("toolu_{n}"),
@@ -97,6 +107,10 @@ struct Lab {
 
 impl Lab {
     async fn start(looping: bool, extra_config: &str) -> Lab {
+        Lab::start_with(looping, false, extra_config).await
+    }
+
+    async fn start_with(looping: bool, no_args: bool, extra_config: &str) -> Lab {
         let upstream = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
@@ -104,6 +118,7 @@ impl Lab {
             .and(header("x-api-key", KEY))
             .respond_with(FakeClaude {
                 looping,
+                no_args,
                 calls: AtomicUsize::new(0),
             })
             .mount(&upstream)
@@ -350,4 +365,32 @@ async fn setup_errors_stop_before_any_model_call() {
     );
     assert!(lab.requests().await.is_empty());
     assert!(bad.requests().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_tool_called_without_arguments_goes_back_as_an_empty_object() {
+    // 003 第 7 步真的跑才發現:沒有參數的工具呼叫,串流裡沒有 `input_json_delta`,
+    // 參數組成空字串,下一輪送回 Anthropic 時被當成不合法的 JSON 拒絕。
+    let lab = Lab::start_with(false, true, "").await;
+    let out = lab
+        .agent(
+            &[
+                "run",
+                "notes 裡有什麼?",
+                "--model",
+                "cheap",
+                "--root",
+                "notes",
+            ],
+            Some(KEY),
+        )
+        .await;
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stderr.contains("[1] list_dir {} → todo.md"), "{stderr}");
+    let requests = lab.requests().await;
+    assert_eq!(requests.len(), 2);
+    let call = &requests[1]["messages"][1]["content"][0];
+    assert_eq!(call["type"], "tool_use");
+    assert_eq!(call["input"], json!({}));
 }
