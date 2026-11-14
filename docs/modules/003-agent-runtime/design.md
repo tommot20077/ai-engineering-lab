@@ -171,6 +171,18 @@ pub enum Outcome {
 | `read_file` | `path`、`offset`、`limit`(行) | 見下 |
 | `list_dir` | `path` | §10-1:不知道有哪些檔案,`read_file` 很難用 |
 
+**`calculator` 實作時定下的(第 2 步,`tools/calculator.rs`)**:
+
+- 三段:lexer(字串 → token)→ Pratt parser(token → 語法樹 `Expr`)→ eval(語法樹 → `f64`)。
+- 優先順序:`+ -` < `* / %` < 負號 < `^`;`^` 由右往左(`2 ^ 3 ^ 2 = 512`),`-2 ^ 2 = -4`(跟數學課本一樣)。
+  binding power 刻意用一奇一偶(1/2、3/4、8/7),左右兩邊永遠不會相等,所以比較時 `<` 和 `<=` 等價。
+- 不支援省略乘號(`2(3)`)、`%` 是餘數不是百分比:都回錯誤,不猜。錯誤訊息附「第幾個字元」(不是第幾個 byte)。
+- 數字:`12`、`1.5`、`.5`、`1e3`、`2E-1`;`e` 後面接數字才算指數,否則是常數 `e`(要往後看兩個字元,複製 iterator 來看)。
+- 上限:算式 1024 bytes、巢狀 64 層。長度上限讓巢狀最多約 500 層,本來不會 stack overflow;深度上限是另一道防線,
+  測試直接對 parser 餵 10 萬層括號。拿掉深度檢查的 mutant 讓整個測試程式 stack overflow、SIGABRT 中止。
+- 每一步都檢查結果是有限的數(`1 / (10 ^ 400)` 不能變成 0);除以 0 是 `Failed`(算式沒錯、算不出來),其餘是 `InvalidArgs`。
+- 排版:`1e-6 <= |x| < 1e16` 用一般寫法(2^53 以內的整數印出每一位),其餘用科學記號;沒有 `-0`。
+
 選 `calculator` 不只是範例:模型算大數字常錯,這是 eval 量得出「工具有沒有幫助」的地方。
 
 **`read_file` / `list_dir` 的安全規則**(工具建立時給一個根目錄;CLI 沒給 `--root` 就不註冊這兩個工具):
@@ -224,7 +236,7 @@ agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--ma
 | # | 內容 | 主要 Rust 概念 |
 |---|---|---|
 | 1 | crate 骨架、`Tool` / `ErasedTool` / `Toolbox`、`current_time` **(完成)** | 關聯型別、trait 回傳 `impl Future`、blanket impl 做型別抹除、schemars derive、insta 鎖 schema |
-| 2 | `calculator` | `Peekable<Chars>` 寫 lexer、Pratt parser(binding power)、遞迴深度上限、proptest |
+| 2 | `calculator` **(完成)** | `Peekable<Chars>` 寫 lexer、Pratt parser(binding power)、遞迴深度上限、proptest |
 | 3 | `read_file`、`list_dir` | `Path` / `PathBuf` / `Component`、`canonicalize`、symlink 測試、`#[cfg(unix)]` |
 | 4 | agent loop:停止原因、護欄、並行執行、結果截斷(假的 provider 照劇本回應) | 窮舉的 `match`、`buffered`、`tokio::time::timeout`、UTF-8 邊界 |
 | 5 | 軌跡、CLI、`agent.toml`、Record、E2E(wiremock 多輪)、crate README、`examples/` | serde tagged enum、clap、composition root |

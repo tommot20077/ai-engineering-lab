@@ -1,0 +1,21 @@
+---
+source: crates/agent/src/tools/calculator/tests.rs
+expression: Calculator.def()
+---
+{
+  "name": "calculator",
+  "description": "計算數學算式。需要精確的數字時一定要用(大數字的乘除、次方、多步驟計算),不要心算。支援 + - * /、%(餘數,不是百分比;百分比請寫成 * 0.15)、^(次方)、括號、負號,函式 sqrt abs ln log10 floor ceil round,常數 pi e。以 64 位元浮點數計算,約 15~16 位有效數字。",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "expression": {
+        "description": "算式,例如 \"(1 + 2) * 3 ^ 2\"。",
+        "type": "string"
+      }
+    },
+    "required": [
+      "expression"
+    ],
+    "type": "object"
+  }
+}

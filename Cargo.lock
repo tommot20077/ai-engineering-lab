@@ -10,6 +10,7 @@ dependencies = [
  "insta",
  "jiff",
  "llm",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",

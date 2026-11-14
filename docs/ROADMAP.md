@@ -55,8 +55,8 @@
   **結果**:評審可信(Opus、Sonnet 抓到 35/35,Haiku 33/35;對照組 0 冤枉;injection 0/4);`rust-intermediate` 上 Haiku 87.1% 對 Sonnet 96.8%
   (+9.7 [+0.0, +22.6]),但 A/A 就有 +6.5、3 題翻轉裡 2 題在 A/A 也翻轉 → **仍然分不出兩個模型**;三個評審逐條 100% 一致。評審維持 Sonnet。花 $1.11。
 - **模組 003 Agent runtime**(2026-11-12 開始):設計 `docs/modules/003-agent-runtime/design.md`(已定案,D-041~D-045)。
-  第一部分完成到第 1 步:`crates/agent` 骨架、工具介面(`Tool` / `ErasedTool` / `Toolbox`)、`current_time`。
-- **下一步**:003 第 2 步,`calculator`(自己寫的 lexer + Pratt parser)。
+  第一部分完成到第 2 步:`crates/agent` 骨架、工具介面(`Tool` / `ErasedTool` / `Toolbox`)、`current_time`、`calculator`。
+- **下一步**:003 第 3 步,`read_file`、`list_dir`(只讀、限定在根目錄內、擋 symlink 跳出)。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -121,7 +121,7 @@
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 完成:第一部分(第 1~11 步,第一次真的比較)、第二部分(資料集與評審校準,第二次比較);回顧見 `retro.md` |
-| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 進行中:第一部分(loop + 內建工具)第 1 步完成;分三部分(D-041) |
+| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 進行中:第一部分(loop + 內建工具)第 2 步完成;分三部分(D-041) |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
 

@@ -29,3 +29,5 @@ uuid.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 # 鎖住送給模型的工具定義(名稱、說明、schema),改了要人看過 diff 才接受。
 insta.workspace = true
+# calculator 的 parser:任意輸入都不 panic;整數運算跟 i64 的結果一樣。
+proptest.workspace = true
