@@ -59,7 +59,8 @@
   軌跡、`agent run` CLI 套 Record)、eval 的 `Input::Agent` + `agent-basics`(18 題)+ 對照組 `agent-basics-notools`。
   **結果**:給工具 38.9% → 100%(+61.1 [+38.9, +83.3],全部來自日期與檔案題);Haiku 對 Sonnet 18/18 對 18/18(天花板,A/A 也是 0),
   Sonnet 貴 17.7 倍;injection 沒成功;真的跑抓到 001 的 bug(沒有參數片段的工具呼叫組成空字串,修在 `Accumulator`)。花 $0.158。
-- **下一步**:003 第二部分(MCP client)的設計:有設計分岔,先列方案給使用者選。第三部分(沙箱)在第二部分之後。
+- **003 第二部分(MCP client)**:五個分岔已選(D-047~D-051),設計草稿 `docs/modules/003-agent-runtime/design-part2.md`。
+- **下一步**:使用者確認 design-part2 §9 的五個小決定 → 改成已定案 → 照 §8 從第 1 步開始。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -116,6 +117,11 @@
 | D-044 | 第一批內建工具沒有副作用:`calculator`(自己寫 parser)、`current_time`、`read_file`(只讀、限定在指定目錄內);`web_fetch` 與會寫檔、跑程式的工具延後 | 第一部分不需要沙箱;`web_fetch` 要處理 SSRF 與 eval 作弊(Harness²) | 2026-11-12 |
 | D-045 | `crates/agent` 是 library、直接用 `llm`;agent 的 CLI 套 Record(真實使用,是階段 2 的原料),eval 跑 agent 時不套(D-033);軌跡由 binary 寫進私有目錄(700/600) | Record 要不要套由組裝的地方決定,library 不知道;library 不寫檔(D-016) | 2026-11-12 |
 | D-046 | `Agent<'p>` 借用 provider(`&'p dyn LlmProvider`),不持有 `Arc` | provider 屬於組裝它的地方:CLI 拿著 `Arc`,eval 的執行器只有借來的參考(刻意不用 Arc),借來的參考變不成要永遠活著的 `Arc`;借用讓兩種呼叫者都能用,lifetime 保證 agent 不會比 provider 活得久 | 2026-11-14 |
+| D-047 | MCP client 從零寫:JSON-RPC 2.0 + `initialize`、`tools/list`、`tools/call`;只做 tools | 只做工具時協定很小;核心機制自己寫,學得到請求與回應的對應、錯誤分類 | 2026-11-14 |
+| D-048 | MCP 的 stdio 與 Streamable HTTP 兩種傳輸一起做,用 trait 劃邊界 | 本機的 server 多是 stdio、遠端是 HTTP;兩種實作是已知的擴展點 | 2026-11-14 |
+| D-049 | MCP 工具的參數用 `jsonschema` crate 驗證(server 給的 schema,啟動時編譯) | 參數來自模型、不可信;JSON Schema 驗證不是 AI 核心機制,自己寫只會不完整 | 2026-11-14 |
+| D-050 | MCP 工具白名單:`agent.toml` 為每個 server 列出允許的工具;名稱加 server 前綴;子行程清空環境變數 | server 給的名稱與說明會進 prompt(可能藏 injection);server 升級多出的工具不能自動給模型;API key 不能漏給第三方程式 | 2026-11-14 |
+| D-051 | MCP 的測試用自己寫的測試 server(stdio 與 HTTP,可以故意出錯);另寫 `#[ignore]` 測試對真的參考 server 跑 | CI 不需要 Node / Python;能製造錯誤;第一部分的教訓是假的要跟真的對過 | 2026-11-14 |
 
 ## 模組
 
