@@ -56,22 +56,27 @@ pub enum ConfigError {
 }
 
 /// 一個可以執行任務的 agent。本身不帶狀態,同一個 agent 可以執行很多次。
-pub struct Agent {
-    provider: Arc<dyn LlmProvider>,
+///
+/// provider 是**借來的**(`&'p dyn LlmProvider`):provider 屬於組裝它的地方(CLI 的 `Arc`、eval 執行器借給每一題的參考),
+/// agent 只是拿來用。`'p` 是那個借用的 lifetime:compiler 保證 agent 不會活得比 provider 久。
+// 為什麼不用 `Arc<dyn LlmProvider>`:eval 的執行器手上只有 `&dyn LlmProvider`(它刻意不用 Arc),
+// 借來的參考沒辦法變成「要永遠活著」的 `Arc`。改成借用,兩種呼叫者都能用。Java 對照:Java 只有一種參考,
+// 不用想誰擁有;Rust 要在型別上寫出「借來的」,換來的是不可能在 provider 被丟掉之後還用它。
+pub struct Agent<'p> {
+    provider: &'p dyn LlmProvider,
     toolbox: Arc<Toolbox>,
     config: AgentConfig,
     /// 工具定義只算一次;每一輪都送一樣的內容,順序固定,prompt cache 才吃得到。
     tools: Vec<ToolDef>,
 }
 
-impl Agent {
-    // provider 是 `Arc<dyn LlmProvider>`:要套哪些 decorator(Record、Retry、Alias)由呼叫者決定(D-045),
-    // agent 不知道也不在乎。CLI 套 Record,eval 不套。
+impl<'p> Agent<'p> {
+    // 要套哪些 decorator(Record、Retry、Alias)由呼叫者決定(D-045),agent 不知道也不在乎。CLI 套 Record,eval 不套。
     pub fn new(
-        provider: Arc<dyn LlmProvider>,
+        provider: &'p dyn LlmProvider,
         toolbox: Arc<Toolbox>,
         config: AgentConfig,
-    ) -> Result<Agent, ConfigError> {
+    ) -> Result<Agent<'p>, ConfigError> {
         if config.model.trim().is_empty() {
             return Err(ConfigError::EmptyModel);
         }
@@ -127,8 +132,10 @@ impl Agent {
 }
 
 /// 一次執行。狀態(對話、計數器、截止時間)和護欄都在這裡面,呼叫者只能拉下一步。
+// `&'a Agent<'a>`:Run 借 agent 的時間('a)不會比 agent 借 provider 的時間長。寫成同一個 `'a` 就夠了:
+// `Agent<'p>` 對 `'p` 是 covariant(活得久的可以當成活得短的用),compiler 會自動把 `'p` 縮成 `'a`。
 pub struct Run<'a> {
-    agent: &'a Agent,
+    agent: &'a Agent<'a>,
     run_id: Uuid,
     messages: Vec<Message>,
     steps: Vec<Step>,
@@ -376,7 +383,7 @@ impl Run<'_> {
     }
 }
 
-async fn execute_one(agent: &Agent, run_id: Uuid, call: Call) -> ToolCallRecord {
+async fn execute_one(agent: &Agent<'_>, run_id: Uuid, call: Call) -> ToolCallRecord {
     let limits = &agent.config.limits;
     let begun = Instant::now();
     let (result, is_error) = if call.args_json.len() > limits.max_args_bytes {

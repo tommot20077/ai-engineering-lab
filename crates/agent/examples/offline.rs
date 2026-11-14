@@ -93,7 +93,8 @@ async fn main() -> anyhow::Result<()> {
     let tools: Vec<Box<dyn ErasedTool>> = vec![Box::new(Calculator), Box::new(CurrentTime)];
     let mut config = AgentConfig::new("scripted");
     config.clock = Clock::System;
-    let agent = Agent::new(provider, Arc::new(Toolbox::new(tools)?), config)?;
+    // agent 借用 provider(`&*provider`:從 Arc 借出裡面的值),provider 本身留在這裡。
+    let agent = Agent::new(&*provider, Arc::new(Toolbox::new(tools)?), config)?;
 
     println!("任務:1234 乘 5678 是多少?");
     let mut run = agent.start("1234 乘 5678 是多少?");

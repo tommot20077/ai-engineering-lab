@@ -268,7 +268,7 @@ fn config() -> AgentConfig {
     config
 }
 
-fn build(provider: Arc<dyn LlmProvider>, config: AgentConfig) -> (Agent, Setup) {
+fn build(provider: &dyn LlmProvider, config: AgentConfig) -> (Agent<'_>, Setup) {
     let (toolbox, setup) = toolbox();
     (Agent::new(provider, toolbox, config).unwrap(), setup)
 }
@@ -286,7 +286,7 @@ fn limit(limit: Limit) -> Outcome {
 #[tokio::test]
 async fn a_plain_answer_ends_the_run() {
     let provider = Scripted::new(vec![Reply::Now(text_reply("你好"))]);
-    let (agent, _) = build(provider.clone(), config());
+    let (agent, _) = build(&*provider, config());
     let finished = agent.run("打個招呼").await;
 
     assert_eq!(
@@ -324,7 +324,7 @@ async fn a_tool_result_is_fed_back_to_the_model() {
         )])),
         Reply::Now(text_reply("答案是 42")),
     ]);
-    let (agent, _) = build(provider.clone(), config());
+    let (agent, _) = build(&*provider, config());
     let finished = agent.run("6 乘 7").await;
 
     assert_eq!(
@@ -394,7 +394,8 @@ async fn the_answer_joins_every_text_block_and_skips_thinking() {
         StopKind::EndTurn,
         "end_turn",
     );
-    let (agent, _) = build(Scripted::new(vec![Reply::Now(reply)]), config());
+    let provider = Scripted::new(vec![Reply::Now(reply)]);
+    let (agent, _) = build(&*provider, config());
     assert_eq!(
         agent.run("?").await.outcome,
         Outcome::Answered {
@@ -420,7 +421,7 @@ async fn thinking_blocks_go_back_to_the_model_unchanged() {
         "tool_use",
     );
     let provider = Scripted::new(vec![Reply::Now(first), Reply::Now(text_reply("2"))]);
-    let (agent, _) = build(provider.clone(), config());
+    let (agent, _) = build(&*provider, config());
     agent.run("1+1").await;
     let assistant = &provider.requests()[1].messages[1];
     assert_eq!(
@@ -438,7 +439,7 @@ async fn the_tool_gets_the_run_id_call_id_and_clock() {
         Reply::Now(tool_reply(&[("toolu_9", "whoami", "{}")])),
         Reply::Now(text_reply("ok")),
     ]);
-    let (agent, _) = build(provider, config());
+    let (agent, _) = build(&*provider, config());
     let mut run = agent.start("你是誰");
     let run_id = run.run_id();
     let step = run.next().await.unwrap();
@@ -462,7 +463,7 @@ async fn tool_errors_go_back_to_the_model_and_the_run_continues() {
         ])),
         Reply::Now(text_reply("抱歉")),
     ]);
-    let (agent, _) = build(provider.clone(), config());
+    let (agent, _) = build(&*provider, config());
     let finished = agent.run("?").await;
     assert_eq!(
         finished.outcome,
@@ -509,7 +510,7 @@ async fn oversized_arguments_are_refused_without_parsing() {
         ])),
         Reply::Now(text_reply("ok")),
     ]);
-    let (agent, _) = build(provider, config);
+    let (agent, _) = build(&*provider, config);
     let finished = agent.run("?").await;
     let results: Vec<(&str, bool)> = finished.steps[0]
         .tool_calls
@@ -538,7 +539,7 @@ async fn calls_in_one_turn_run_in_parallel_and_keep_their_order() {
         ])),
         Reply::Now(text_reply("ok")),
     ]);
-    let (agent, _) = build(provider, config);
+    let (agent, _) = build(&*provider, config);
     let started = Instant::now();
     let finished = agent.run("?").await;
     let labels: Vec<&str> = finished.steps[0]
@@ -563,7 +564,7 @@ async fn a_slow_tool_times_out_into_an_error_result() {
         ])),
         Reply::Now(text_reply("ok")),
     ]);
-    let (agent, _) = build(provider, config);
+    let (agent, _) = build(&*provider, config);
     let finished = agent.run("?").await;
     let results: Vec<(&str, bool)> = finished.steps[0]
         .tool_calls
@@ -594,7 +595,7 @@ async fn large_results_are_cut_at_a_character_boundary() {
         ])),
         Reply::Now(text_reply("ok")),
     ]);
-    let (agent, _) = build(provider, config);
+    let (agent, _) = build(&*provider, config);
     let finished = agent.run("?").await;
     let results: Vec<&str> = finished.steps[0]
         .tool_calls
@@ -647,7 +648,8 @@ async fn stop_reasons_other_than_end_turn_and_tool_use_end_the_run() {
     for (kind, raw, expected) in cases {
         // 回應裡帶著工具呼叫:確認這些停止原因下,工具一律不執行。
         let reply = response(vec![text("…"), call("t1", "count", "{}")], kind, raw);
-        let (agent, setup) = build(Scripted::new(vec![Reply::Now(reply)]), config());
+        let provider = Scripted::new(vec![Reply::Now(reply)]);
+        let (agent, setup) = build(&*provider, config());
         let finished = agent.run("?").await;
         assert_eq!(finished.outcome, expected, "{raw}");
         assert_eq!(finished.steps.len(), 1, "{raw}");
@@ -663,7 +665,8 @@ async fn contradictions_between_stop_reason_and_content_are_failures() {
         StopKind::EndTurn,
         "end_turn",
     );
-    let (agent, setup) = build(Scripted::new(vec![Reply::Now(reply)]), config());
+    let provider = Scripted::new(vec![Reply::Now(reply)]);
+    let (agent, setup) = build(&*provider, config());
     assert_eq!(
         agent.run("?").await.outcome,
         failed(AgentFailure::CallsWithoutToolUse)
@@ -672,7 +675,8 @@ async fn contradictions_between_stop_reason_and_content_are_failures() {
 
     // 停止原因是 tool_use,卻沒有工具呼叫。
     let reply = response(vec![text("…")], StopKind::ToolUse, "tool_use");
-    let (agent, _) = build(Scripted::new(vec![Reply::Now(reply)]), config());
+    let provider = Scripted::new(vec![Reply::Now(reply)]);
+    let (agent, _) = build(&*provider, config());
     assert_eq!(
         agent.run("?").await.outcome,
         failed(AgentFailure::ToolUseWithoutCalls)
@@ -686,7 +690,7 @@ async fn a_repeated_call_id_is_a_failure_and_is_not_executed() {
         Reply::Now(tool_reply(&[("same", "count", "{}")])),
         Reply::Now(tool_reply(&[("same", "count", "{}")])),
     ]);
-    let (agent, setup) = build(provider, config());
+    let (agent, setup) = build(&*provider, config());
     let finished = agent.run("?").await;
     assert_eq!(
         finished.outcome,
@@ -700,7 +704,7 @@ async fn a_repeated_call_id_is_a_failure_and_is_not_executed() {
         ("b", "count", "{}"),
         ("a", "count", "{}"),
     ]))]);
-    let (agent, setup) = build(provider, config());
+    let (agent, setup) = build(&*provider, config());
     assert_eq!(
         agent.run("?").await.outcome,
         failed(AgentFailure::DuplicateCallId { id: "a".into() })
@@ -711,7 +715,7 @@ async fn a_repeated_call_id_is_a_failure_and_is_not_executed() {
 #[tokio::test]
 async fn a_failed_model_call_ends_the_run_without_a_step() {
     let provider = Scripted::new(vec![Reply::Fail(LlmError::Timeout)]);
-    let (agent, _) = build(provider, config());
+    let (agent, _) = build(&*provider, config());
     let finished = agent.run("?").await;
     assert_eq!(
         finished.outcome,
@@ -736,7 +740,7 @@ async fn the_turn_limit_stops_a_model_that_never_answers() {
     let mut config = config();
     config.limits.max_turns = 3;
     let provider = looping(usage());
-    let (agent, setup) = build(provider.clone(), config);
+    let (agent, setup) = build(&*provider, config);
     let finished = agent.run("?").await;
     assert_eq!(finished.outcome, limit(Limit::Turns));
     assert_eq!(finished.steps.len(), 3);
@@ -755,7 +759,7 @@ async fn the_tool_call_limit_refuses_a_whole_turn_that_would_cross_it() {
         // 3 + 1 > 3:整輪不執行。
         Reply::Now(tool_reply(&[("d", "count", "{}")])),
     ]);
-    let (agent, setup) = build(provider, config);
+    let (agent, setup) = build(&*provider, config);
     let finished = agent.run("?").await;
     assert_eq!(finished.outcome, limit(Limit::ToolCalls));
     assert_eq!(finished.steps.len(), 3);
@@ -774,7 +778,7 @@ async fn the_token_limit_stops_before_the_next_model_call() {
         cache_read_tokens: 150,
         cache_write_tokens: 50,
     });
-    let (agent, _) = build(provider.clone(), config);
+    let (agent, _) = build(&*provider, config);
     let finished = agent.run("?").await;
     assert_eq!(finished.outcome, limit(Limit::Tokens));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
@@ -788,7 +792,7 @@ async fn the_token_limit_stops_before_the_next_model_call() {
         input_tokens: 600,
         ..Usage::default()
     });
-    let (agent, _) = build(provider.clone(), config);
+    let (agent, _) = build(&*provider, config);
     assert_eq!(agent.run("?").await.outcome, limit(Limit::Tokens));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }
@@ -802,7 +806,7 @@ async fn the_deadline_cuts_off_a_slow_model_call() {
         Reply::After(wait, tool_reply(&[("a", "count", "{}")])),
         Reply::After(wait, text_reply("太晚了")),
     ]);
-    let (agent, _) = build(provider, config);
+    let (agent, _) = build(&*provider, config);
     let started = Instant::now();
     let finished = agent.run("?").await;
     assert_eq!(finished.outcome, limit(Limit::Deadline));
@@ -819,7 +823,7 @@ async fn steps_can_be_pulled_one_at_a_time() {
         Reply::Now(tool_reply(&[("a", "count", "{}")])),
         Reply::Now(text_reply("完成")),
     ]);
-    let (agent, _) = build(provider.clone(), config());
+    let (agent, _) = build(&*provider, config());
     let mut run = agent.start("?");
     let first = run.next().await.unwrap();
     assert_eq!(first.turn, 1);
@@ -843,7 +847,7 @@ async fn steps_can_be_pulled_one_at_a_time() {
 #[tokio::test]
 async fn finishing_early_is_recorded_as_stopped() {
     let provider = Scripted::new(vec![Reply::Now(tool_reply(&[("a", "count", "{}")]))]);
-    let (agent, _) = build(provider, config());
+    let (agent, _) = build(&*provider, config());
     let mut run = agent.start("?");
     run.next().await.unwrap();
     let finished = run.finish();
@@ -857,7 +861,7 @@ async fn finishing_early_is_recorded_as_stopped() {
 fn bad_configurations_are_rejected_up_front() {
     let (toolbox, _) = toolbox();
     let provider: Arc<dyn LlmProvider> = Scripted::new(vec![]);
-    let build = |config| Agent::new(provider.clone(), toolbox.clone(), config).err();
+    let build = |config| Agent::new(&*provider, toolbox.clone(), config).err();
 
     let mut c = config();
     c.model = "  ".into();

@@ -97,7 +97,7 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
 
     let (provider, records) = build_provider(settings, !args.no_record)?;
     let agent = Agent::new(
-        provider,
+        provider.as_ref(),
         toolbox,
         AgentConfig {
             model: model.clone(),
@@ -146,8 +146,9 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
     });
     let path = trajectory.path().to_path_buf();
 
-    // provider 鏈裡的 Record 也拿著一份 writer:先丟掉 agent(連同 provider),writer 才只剩我們這一份。
+    // provider 鏈裡的 Record 也拿著一份 writer:先丟掉 agent(它借著 provider)和 provider 本身,writer 才只剩我們這一份。
     drop(agent);
+    drop(provider);
     if let Some(writer) = records {
         flush_records(writer).await;
     }

@@ -104,8 +104,8 @@ use agent::{Agent, AgentConfig, Toolbox, ErasedTool, Outcome};
 use agent::tools::{Calculator, CurrentTime};
 
 let tools: Vec<Box<dyn ErasedTool>> = vec![Box::new(Calculator), Box::new(CurrentTime)];
-// provider:任何 `Arc<dyn LlmProvider>`。要套哪些 decorator(Record、Retry、Alias)由你決定。
-let agent = Agent::new(provider, Arc::new(Toolbox::new(tools)?), AgentConfig::new("default"))?;
+// provider:任何 `LlmProvider`,agent 只借用它(`&dyn LlmProvider`)。要套哪些 decorator(Record、Retry、Alias)由你決定。
+let agent = Agent::new(&*provider, Arc::new(Toolbox::new(tools)?), AgentConfig::new("default"))?;
 
 // 一次跑完:
 let finished = agent.run("1234 乘 5678 是多少?").await;
