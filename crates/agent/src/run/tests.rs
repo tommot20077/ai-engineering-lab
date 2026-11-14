@@ -578,6 +578,13 @@ async fn a_slow_tool_times_out_into_an_error_result() {
             ("the tool did not finish within 30 seconds", true)
         ]
     );
+    // 工具耗時:準時的 30 秒,逾時的在第 30 秒被切斷。
+    let durations: Vec<u64> = finished.steps[0]
+        .tool_calls
+        .iter()
+        .map(|r| r.duration_ms)
+        .collect();
+    assert_eq!(durations, [30_000, 30_000]);
 }
 
 // ---- 截斷 ----
@@ -785,6 +792,17 @@ async fn the_token_limit_stops_before_the_next_model_call() {
     assert_eq!(finished.usage.cache_read_tokens, 300);
     assert_eq!(finished.usage.cache_write_tokens, 100);
 
+    // 只有 cache 寫入也算進合計:一輪 1000 個 cache 寫入的 token,上限 1000,第一輪後就停。
+    let mut config = self::config();
+    config.limits.max_total_tokens = 1000;
+    let provider = looping(Usage {
+        cache_write_tokens: 1000,
+        ..Usage::default()
+    });
+    let (agent, _) = build(&*provider, config);
+    assert_eq!(agent.run("?").await.outcome, limit(Limit::Tokens));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+
     // 剛好等於上限也停。
     let mut config = self::config();
     config.limits.max_total_tokens = 600;
@@ -811,6 +829,8 @@ async fn the_deadline_cuts_off_a_slow_model_call() {
     let finished = agent.run("?").await;
     assert_eq!(finished.outcome, limit(Limit::Deadline));
     assert_eq!(finished.steps.len(), 1);
+    // 延遲是這一步模型呼叫花的時間(暫停的時鐘:剛好 200 秒)。
+    assert_eq!(finished.steps[0].latency_ms, 200_000);
     // 第二次呼叫在第 300 秒被取消,不是等到第 400 秒。
     assert_eq!(started.elapsed(), Duration::from_secs(300));
 }

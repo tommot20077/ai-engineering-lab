@@ -252,6 +252,13 @@ async fn very_long_paths_are_rejected_before_touching_the_disk() {
         read(&f, serde_json::json!({ "path": long })).await,
         invalid("path is longer than 1024 bytes")
     );
+    // 剛好 1024 bytes:長度檢查放行,接著才發現檔案不存在。
+    let exact = format!("{}aa", "a/".repeat(511));
+    assert_eq!(exact.len(), 1024);
+    assert_eq!(
+        read(&f, serde_json::json!({ "path": exact })).await,
+        failed(&format!("no such file or directory: {exact:?}"))
+    );
 }
 
 // ---- list_dir ----

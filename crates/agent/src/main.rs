@@ -278,3 +278,21 @@ fn describe(outcome: &Outcome, limits: &agent::AgentLimits) -> String {
         Outcome::Stopped => "stopped before the end".into(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_preview_is_the_first_line_cut_at_120_characters() {
+        assert_eq!(preview("42"), "42");
+        assert_eq!(preview(""), "");
+        // 剛好 120 個字元(中文,每個 3 bytes):不加 `…`。比 bytes 會把它當成太長。
+        let exact = "中".repeat(120);
+        assert_eq!(preview(&exact), exact);
+        // 121 個字元:切到 120,加 `…`。
+        assert_eq!(preview(&"中".repeat(121)), format!("{}…", "中".repeat(120)));
+        // 第一行很短,但後面還有:加 `…`。
+        assert_eq!(preview("1\tfirst\n2\tsecond"), "1\tfirst…");
+    }
+}

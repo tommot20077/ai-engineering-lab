@@ -282,7 +282,7 @@ fn the_estimate_covers_the_token_limit_and_every_turn_using_max_tokens() {
         "ds",
         agent_line(
             "a",
-            serde_json::json!({"type": "agent", "prompt": "四個字的", "tools": ["calculator"],
+            serde_json::json!({"type": "agent", "system": "簡短", "prompt": "四個字的", "tools": ["calculator"],
                                "max_tokens": 1000, "max_turns": 3}),
         )
         .as_bytes(),
@@ -292,8 +292,8 @@ fn the_estimate_covers_the_token_limit_and_every_turn_using_max_tokens() {
         panic!("expected an agent input");
     };
     let (tokens_in, tokens_out) = worst_case_tokens(input);
-    // 60,000 + (12 bytes 的題目 + 4096 bytes 的工具說明) ÷ 2;3 輪 × 1000。
-    assert_eq!(tokens_in, 60_000.0 + (12.0 + 4096.0) / 2.0);
+    // 60,000 + (12 bytes 的題目 + 6 bytes 的 system + 4096 bytes 的工具說明) ÷ 2;3 輪 × 1000。
+    assert_eq!(tokens_in, 60_000.0 + (12.0 + 6.0 + 4096.0) / 2.0);
     assert_eq!(tokens_out, 3000.0);
     let items = run::plan(&ds, &config());
     let estimate = run::estimate(&ds, &items, Some(PRICE));
@@ -346,4 +346,23 @@ fn an_agent_that_did_not_answer_has_no_text_to_check() {
     );
     assert_eq!(output(agent::Outcome::Refused).text(), "");
     assert_eq!(output(agent::Outcome::Refused).model(), "m");
+}
+
+#[test]
+fn the_debug_output_of_an_agent_input_hides_the_task() {
+    let input = AgentInput {
+        system: Some("SYSTEM-CANARY".into()),
+        prompt: "PROMPT-CANARY".into(),
+        tools: vec!["calculator".into()],
+        max_tokens: 100,
+        now: None,
+        root: Some("fixtures/demo".into()),
+        max_turns: Some(3),
+    };
+    let out = format!("{input:?}");
+    assert!(!out.contains("CANARY"), "{out}");
+    assert_eq!(
+        out,
+        r#"AgentInput { system_bytes: Some(13), prompt_bytes: 13, tools: ["calculator"], max_tokens: 100, now: None, root: Some("fixtures/demo"), max_turns: Some(3) }"#
+    );
 }

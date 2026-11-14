@@ -21,4 +21,10 @@ exclude_re = [
     # 抓得到,但是靠逾時:`end -= 1` 換成 `end /= 1` 會變成無窮迴圈,測試要卡到逾時(2~5 分鐘)才失敗。
     # 每週都多花這段時間,而且讓 exit code 變成 3(有逾時),新的逾時就看不出來了,所以排除。
     'replace -= with /= in truncate_on_char_boundary',
+    # 等價(同 Gateway::shutdown):agent CLI 結束前等紀錄寫完。背景的寫檔執行緒通常早就寫完了,
+    # E2E 看不出差別;「關機時清空佇列」由 llm 的 JsonlWriter 測試負責(003 第 5 步)。
+    'crates/agent/src/main\.rs:\d+:\d+: replace flush_records with \(\)',
+    # 等價:Pratt parser 的 binding power 刻意一奇一偶(1/2、3/4、8/7),最小值只會是 0、2、4、5、7,
+    # 左邊的 power 永遠不會等於最小值,`<` 換成 `<=` 行為不變(003 design §7)。
+    'crates/agent/src/tools/calculator\.rs:\d+:\d+: replace < with <= in Parser::expr',
 ]
