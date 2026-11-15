@@ -224,7 +224,8 @@ fn optional_tool_fields_that_are_not_strings_are_dropped() {
     let tool = parse_tool(json!({
         "name": "t", "title": 5, "description": ["x"], "inputSchema": {"type": "object"}
     }))
-    .unwrap();
+    .unwrap()
+    .0;
     assert_eq!(tool.title, None);
     assert_eq!(tool.description, None);
 }
@@ -392,4 +393,87 @@ async fn list_results_are_checked() {
         client.list_tools().await,
         invalid("`nextCursor` must be a string")
     );
+}
+
+#[test]
+fn a_tool_with_an_invalid_header_annotation_is_rejected() {
+    let rejected = parse_tool(json!({"name": "t", "inputSchema": {
+        "type": "object", "properties": {"n": {"type": "number", "x-mcp-header": "N"}}
+    }}))
+    .err()
+    .unwrap();
+    assert_eq!(
+        rejected.reason,
+        "`x-mcp-header` `N` must be on a string, integer or boolean parameter"
+    );
+}
+
+type Headers = Vec<(String, String)>;
+
+#[tokio::test]
+async fn call_tool_sends_the_header_values_of_listed_tools() {
+    // 假傳輸記下 `request_with_headers` 收到的 header。預設實作會丟掉 header,所以這裡要自己實作。
+    struct Recording {
+        inner: Fake,
+        headers: Arc<Mutex<Vec<Headers>>>,
+    }
+    impl Transport for Recording {
+        fn request<'a>(
+            &'a self,
+            m: &'a str,
+            p: Option<Value>,
+        ) -> BoxFuture<'a, Result<Value, McpError>> {
+            self.inner.request(m, p)
+        }
+        fn request_with_headers<'a>(
+            &'a self,
+            m: &'a str,
+            p: Option<Value>,
+            h: Vec<(String, String)>,
+        ) -> BoxFuture<'a, Result<Value, McpError>> {
+            self.headers.lock().unwrap().push(h);
+            self.inner.request(m, p)
+        }
+        fn notify<'a>(
+            &'a self,
+            m: &'a str,
+            p: Option<Value>,
+        ) -> BoxFuture<'a, Result<(), McpError>> {
+            self.inner.notify(m, p)
+        }
+        fn close(self: Box<Self>) -> BoxFuture<'static, ()> {
+            Box::new(self.inner).close()
+        }
+    }
+    let headers = Arc::new(Mutex::new(Vec::new()));
+    let transport = Recording {
+        inner: Fake::new(vec![
+            discover(json!({"supportedVersions": ["2026-07-28"], "capabilities": {"tools": {}}})),
+            Ok(
+                json!({"tools": [{"name": "sql", "inputSchema": {"type": "object", "properties": {
+                    "region": {"type": "string", "x-mcp-header": "Region"}
+                }}}]}),
+            ),
+            Ok(json!({"content": []})),
+            Ok(json!({"content": []})),
+        ]),
+        headers: Arc::clone(&headers),
+    };
+    let client = McpClient::connect(Box::new(transport), ClientOptions::default())
+        .await
+        .unwrap();
+    client.list_tools().await.unwrap();
+    let mut arguments = Map::new();
+    arguments.insert("region".into(), json!("日本"));
+    client.call_tool("sql", arguments.clone()).await.unwrap();
+    // 沒列過的工具:沒有 header。
+    client.call_tool("other", arguments).await.unwrap();
+    let headers = headers.lock().unwrap();
+    // discover、tools/list、兩次 tools/call。
+    assert_eq!(headers.len(), 4);
+    assert_eq!(
+        headers[2],
+        [("Region".to_owned(), "=?base64?5pel5pys?=".to_owned())]
+    );
+    assert_eq!(headers[3], []);
 }

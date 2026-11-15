@@ -1,6 +1,6 @@
 //! 傳輸:把 JSON-RPC 訊息送到 server、把回應拿回來(design-part2 §5,D-048)。
 //!
-//! 兩種實作:stdio(子行程,這一步)與 Streamable HTTP(第 4 步)。`McpClient`(第 3 步)只看得到這個 trait,
+//! 兩種實作:stdio(子行程,第 2 步)與 Streamable HTTP(第 4 步)。`McpClient`(第 3 步)只看得到這個 trait,
 //! 不知道底下是哪一種。
 
 use futures::future::BoxFuture;
@@ -8,8 +8,10 @@ use serde_json::Value;
 
 use crate::McpError;
 
+pub mod http;
 pub mod stdio;
 
+pub use http::{HttpConfig, HttpLimits, HttpTransport};
 pub use stdio::{StdioConfig, StdioLimits, StdioTransport};
 
 /// 一條到 MCP server 的連線。
@@ -25,6 +27,20 @@ pub trait Transport: Send + Sync {
         method: &'a str,
         params: Option<Value>,
     ) -> BoxFuture<'a, Result<Value, McpError>>;
+
+    /// 同 `request`,另外帶上 `Mcp-Param-*` header(`x-mcp-header`,規格 Streamable HTTP)。`headers` 是 `(名稱, 編碼過的值)`,
+    /// 名稱不含 `Mcp-Param-` 前綴。
+    ///
+    /// 有預設實作:stdio 沒有 header,直接忽略。Java 的 `default` 介面方法就是這個。
+    fn request_with_headers<'a>(
+        &'a self,
+        method: &'a str,
+        params: Option<Value>,
+        headers: Vec<(String, String)>,
+    ) -> BoxFuture<'a, Result<Value, McpError>> {
+        let _ = headers;
+        self.request(method, params)
+    }
 
     /// 送出一個通知(不等回應)。
     fn notify<'a>(

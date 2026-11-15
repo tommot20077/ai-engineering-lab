@@ -60,11 +60,12 @@
   **結果**:給工具 38.9% → 100%(+61.1 [+38.9, +83.3],全部來自日期與檔案題);Haiku 對 Sonnet 18/18 對 18/18(天花板,A/A 也是 0),
   Sonnet 貴 17.7 倍;injection 沒成功;真的跑抓到 001 的 bug(沒有參數片段的工具呼叫組成空字串,修在 `Accumulator`)。花 $0.158。
 - **003 第二部分(MCP client)**:設計已定案 `docs/modules/003-agent-runtime/design-part2.md`(D-047~D-051,§9 五個小決定都照建議)。
-- 第二部分完成到第 3 步:`crates/mcp` 骨架與 JSON-RPC 訊息型別(第 1 步)、`Transport` trait + stdio 傳輸 + 測試用的 MCP server(第 2 步)、
-  `McpClient`(第 3 步:協定 2026-07-28,`server/discover` 探測、tools/list 分頁、tools/call、逾時與取消)。
+- 第二部分完成到第 4 步:`crates/mcp` 骨架與 JSON-RPC 訊息型別(第 1 步)、`Transport` trait + stdio 傳輸 + 測試用的 MCP server(第 2 步)、
+  `McpClient`(第 3 步:協定 2026-07-28,`server/discover` 探測、tools/list 分頁、tools/call、逾時與取消)、
+  Streamable HTTP 傳輸(第 4 步:header、JSON 或 SSE 回應、`x-mcp-header`、不跟 redirect;client 的測試兩種傳輸各跑一次)。
 - **MCP 規格改版**(第 3 步開工時查到,D-052):最新版 2026-07-28 是無狀態的,拿掉了 `initialize` 與 `Mcp-Session-Id`;
   設計照 §9-2「只支援最新的一版」改寫,細節在 design-part2 §4。
-- **下一步**:003 第二部分第 4 步:Streamable HTTP 傳輸 + 測試 server(HTTP)。
+- **下一步**:003 第二部分第 5 步:agent 整合(`McpTool`、`[[mcp]]` 設定、白名單、E2E)。
 - **使用者交代(2026-11-15)**:003 全部做完再一起看;第三部分的設計分岔由 Claude 先選建議方案、在文件裡標明,使用者看的時候可以推翻。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。

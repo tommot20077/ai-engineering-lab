@@ -5,6 +5,7 @@
 
 pub mod client;
 mod error;
+mod headers;
 pub mod jsonrpc;
 pub mod transport;
 

@@ -150,7 +150,25 @@ trait Transport: Send + Sync {
   2026-07-28 沒有 session 了(D-052);每個請求帶 `MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name` 三個 header(第 4 步照規格確認)。
 - URL 只收 https(localhost 例外,同 `config_loader::check_api_base_url`);**不跟隨 redirect**(token 不能被帶到別的主機)。
 - 認證:可選的 bearer token,從設定檔指定的環境變數讀(`token_env`),包成 `SecretString`,不進 log。
-- 不開 GET 的長連線(server 主動推送):只做工具不需要。
+- 不開 GET 的長連線(server 主動推送):只做工具不需要。(2026-07-28 已經整個拿掉 GET 串流,改用 `subscriptions/listen`。)
+
+**實作時定下的(第 4 步,`transport/http.rs`、`headers.rs`,照規格 2026-07-28 Streamable HTTP)**:
+
+- 每個請求一個 POST,header:`Accept: application/json, text/event-stream`、`MCP-Protocol-Version`(從 `_meta` 複製)、
+  `Mcp-Method`、`Mcp-Name`(`tools/call` 的工具名稱)。沒有 session,關閉時沒有東西要收。
+- **`x-mcp-header`**(規格要求 client 必須支援):工具 schema 裡標了這個的參數,呼叫時複製到 `Mcp-Param-{名稱}`;
+  不是可見 ASCII(或頭尾有空白、或本身像編碼標記)的值改成 `=?base64?…?=`(依賴樹沒有 base64 crate,自己寫,用 RFC 4648 的向量測)。
+  標註不合法(不在只經過 `properties` 的路徑上、不是 HTTP token、大小寫重複、參數不是 string / integer / boolean)的工具整個排除。
+  檢查跟傳輸無關:同一個工具在 stdio 下也一樣被排除。`Transport` 多一個有預設實作的 `request_with_headers`(stdio 忽略 header)。
+- 回應:`application/json` 讀完(上限 4 MiB);`text/event-stream` 逐事件讀,略過通知、註解、空資料的事件,直到 id 相符的回應
+  (每個事件 4 MiB、整個串流 16 MiB)。串流裡出現 server 的請求、別的 id、串流結束沒有回應 → `Protocol`。content type 只看 media type 本身。
+- 錯誤狀態碼:本文是 JSON-RPC 錯誤回應就交出 `Rpc`(400 + -32022 會被 client 轉成 `UnsupportedVersion`,404 + -32601),
+  否則是 `Http { status, body }`(本文只留開頭 512 字、控制字元換掉)。3xx 也是錯誤(不跟隨 redirect)。
+- HTTP 的每個請求是獨立的:`Protocol`、`TooLarge` 只讓那一個請求失敗,不像 stdio 會關掉連線。
+- 錯誤訊息不含 URL(reqwest 的 `without_url`);URL 裡不能放帳號密碼(會被印出來),token 用 `HttpConfig::token`(`SecretString`)。
+- 取消:請求的 future 被丟掉時 reqwest 關掉連線,規格說這就是取消訊號,不送 `notifications/cancelled`。
+- 測試 server 的 HTTP 模式(axum,綁 127.0.0.1、port 0,URL 印在 stdout 第一行)檢查每個 header 跟 body 一致,
+  不一致回 400 + -32020;client 的整合測試每個都對兩種傳輸各跑一次。
 
 ## 6. agent 整合(D-049、D-050)
 
@@ -198,7 +216,7 @@ tools = ["lookup"]
 | 1 | `crates/mcp` 骨架、JSON-RPC 訊息型別 **(完成)** | serde 的 `untagged` enum、`#[serde(flatten)]` |
 | 2 | stdio 傳輸 + 測試 server(stdio)**(完成)** | `tokio::process`、背景 task、`oneshot`、`HashMap<id, Sender>`、`kill_on_drop` |
 | 3 | `McpClient`:`server/discover` 探測、每個請求的 `_meta`、tools/list 分頁、tools/call **(完成)** | async 的狀態流程、錯誤分類 |
-| 4 | HTTP 傳輸 + 測試 server(HTTP) | reqwest 不跟 redirect、SSE 串流裡找回應、同一組測試跑兩種傳輸 |
+| 4 | HTTP 傳輸 + 測試 server(HTTP)**(完成)** | reqwest 不跟 redirect、SSE 串流裡找回應、同一組測試跑兩種傳輸 |
 | 5 | agent 整合:`McpTool`、`[[mcp]]` 設定、白名單、E2E | `jsonschema` 編譯一次重複用、`Box<dyn ErasedTool>` 混著內建與 MCP 工具 |
 | 6 | 對真的參考 server 跑一次(`#[ignore]`)、README、retro | — |
 

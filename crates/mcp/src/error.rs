@@ -16,12 +16,13 @@ pub enum McpError {
     #[error("the MCP server returned an error: {0}")]
     Rpc(RpcError),
 
-    /// server 違反協定(送來的不是合法的 JSON-RPC 訊息)。我們關掉連線:之後的訊息已經無法信任(fail-closed)。
-    #[error("the MCP server broke the protocol, connection closed: {0}")]
+    /// server 違反協定(送來的不是合法的 JSON-RPC 訊息)。stdio:關掉連線,之後的訊息已經無法信任(fail-closed);
+    /// HTTP:每個請求是獨立的 POST,只有這個請求失敗。
+    #[error("the MCP server broke the protocol: {0}")]
     Protocol(String),
 
-    /// server 送來的一則訊息超過上限。同樣關掉連線。
-    #[error("a message from the MCP server is larger than {limit} bytes, connection closed")]
+    /// server 送來的一則訊息超過上限。stdio 同樣關掉連線。
+    #[error("a message from the MCP server is larger than {limit} bytes")]
     TooLarge { limit: usize },
 
     /// 連線已經結束(server 結束了、關掉了 stdout、寫入失敗)。`stderr` 是 server 最後印出的幾 KB,常常就是原因。
@@ -56,9 +57,30 @@ pub enum McpError {
     #[error("the MCP server sent an invalid `{method}` result: {reason}")]
     InvalidResult { method: String, reason: String },
 
+    /// HTTP 傳輸的 URL 不能用(不是 https、也不是本機的 http)。
+    #[error("invalid MCP server URL: {0}")]
+    InvalidUrl(String),
+
+    /// HTTP 連不上、送不出去、讀到一半斷線。訊息不含 URL。
+    #[error("could not reach the MCP server: {0}")]
+    Network(String),
+
+    /// HTTP 回了錯誤狀態碼,而且本文不是 JSON-RPC 的錯誤回應(那種會變成 `Rpc`)。`body` 是開頭一段、整理成可以印的。
+    /// 3xx 也在這裡:我們不跟隨 redirect(token 不能被帶到別的主機)。
+    #[error("the MCP server answered HTTP {status}{}", body_suffix(.body))]
+    Http { status: u16, body: String },
+
     /// server 要求更多輸入(multi round-trip request)。我們沒有宣告任何 client 能力,不支援。
     #[error("the MCP server asked for more input, which this client does not support")]
     InputRequired,
+}
+
+fn body_suffix(body: &str) -> String {
+    if body.is_empty() {
+        String::new()
+    } else {
+        format!(": {body}")
+    }
 }
 
 fn list_or_none(items: &[String]) -> String {
@@ -97,6 +119,26 @@ mod tests {
             }
             .to_string(),
             "the MCP server closed the connection; its stderr ends with:\nboom"
+        );
+    }
+
+    #[test]
+    fn http_shows_the_body_only_when_there_is_one() {
+        assert_eq!(
+            McpError::Http {
+                status: 502,
+                body: String::new()
+            }
+            .to_string(),
+            "the MCP server answered HTTP 502"
+        );
+        assert_eq!(
+            McpError::Http {
+                status: 401,
+                body: "unauthorized".into()
+            }
+            .to_string(),
+            "the MCP server answered HTTP 401: unauthorized"
         );
     }
 

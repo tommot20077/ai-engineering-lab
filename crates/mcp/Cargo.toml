@@ -19,7 +19,18 @@ futures.workspace = true
 # process:啟動 stdio 的 server(子行程);io-util:一行一行讀寫;sync:`oneshot` 與 `Mutex`;
 # rt:背景 task(讀 stdout、讀 stderr);time:關閉時等子行程結束的上限。
 # io-std + macros:測試 server(`src/bin`)讀自己的 stdin、`#[tokio::main]`。
-tokio = { workspace = true, features = ["process", "io-util", "io-std", "sync", "rt", "time", "macros"] }
+tokio = { workspace = true, features = ["process", "io-util", "io-std", "sync", "rt", "time", "macros", "net"] }
+# ---- Streamable HTTP 傳輸(第 4 步)----
+# HTTP client,跟 llm 用同一個(rustls)。不跟隨 redirect、bearer token。
+reqwest.workspace = true
+# SSE 的回應串流:重用 llm 的 `SseParser`(design-part2 §3),不再寫一份。
+llm = { path = "../llm" }
+# bearer token 的包裝型別:Debug 印 [REDACTED](同 llm 的 API key)。
+secrecy.workspace = true
+# 檢查 URL:只收 https,本機例外。
+url.workspace = true
+# 測試 server 的 HTTP 模式(`src/bin`)。binary 跟 library 共用依賴,library 本身不用它。
+axum.workspace = true
 
 [dev-dependencies]
 # `#[tokio::test]`。

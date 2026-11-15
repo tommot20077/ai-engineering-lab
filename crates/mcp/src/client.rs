@@ -12,12 +12,14 @@
 //!
 //! server 送來的一切都是不可信輸入:結果逐欄檢查,要印出來的字串先整理過。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
 use crate::McpError;
+use crate::headers::{self, ParamHeader};
 use crate::transport::Transport;
 
 /// 唯一支援的協定版本(design-part2 §9-2:只支援驗證過的那一版)。
@@ -110,6 +112,9 @@ pub struct McpClient {
     transport: Box<dyn Transport>,
     options: ClientOptions,
     server: ServerInfo,
+    /// `list_tools` 記下每個工具的 `x-mcp-header`,`call_tool` 照著加 `Mcp-Param-*` header。
+    /// `Mutex`:`list_tools` 只拿 `&self`(呼叫端可以同時呼叫好幾個方法),要改內容就需要內部可變性(Java 的 synchronized 欄位)。
+    param_headers: Mutex<HashMap<String, Vec<ParamHeader>>>,
 }
 
 impl McpClient {
@@ -122,6 +127,7 @@ impl McpClient {
             transport,
             options,
             server: ServerInfo::default(),
+            param_headers: Mutex::new(HashMap::new()),
         };
         match client.discover().await {
             Ok(server) => {
@@ -147,6 +153,7 @@ impl McpClient {
             reason,
         };
         let mut list = ToolList::default();
+        let mut param_headers = HashMap::new();
         let mut names = HashSet::new();
         let mut seen_cursors = HashSet::new();
         let mut cursor: Option<String> = None;
@@ -161,15 +168,18 @@ impl McpClient {
             if let Some(cursor) = &cursor {
                 params.insert("cursor".into(), json!(cursor));
             }
-            let mut result = self.request(METHOD, params).await?;
+            let mut result = self.request(METHOD, params, Vec::new()).await?;
             let Some(Value::Array(tools)) = result.remove("tools") else {
                 return Err(invalid("`tools` must be an array".into()));
             };
             for tool in tools {
                 match parse_tool(tool) {
                     // `HashSet::insert` 回傳「原本沒有」:名稱重複時保留第一個。
-                    Ok(tool) if names.insert(tool.name.clone()) => list.tools.push(tool),
-                    Ok(tool) => list.rejected.push(RejectedTool {
+                    Ok((tool, headers)) if names.insert(tool.name.clone()) => {
+                        param_headers.insert(tool.name.clone(), headers);
+                        list.tools.push(tool);
+                    }
+                    Ok((tool, _)) => list.rejected.push(RejectedTool {
                         name: Some(tool.name),
                         reason: "duplicate name".into(),
                     }),
@@ -194,6 +204,10 @@ impl McpClient {
                 return Err(invalid("the server repeated a cursor".into()));
             }
         }
+        *self
+            .param_headers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = param_headers;
         Ok(list)
     }
 
@@ -208,10 +222,18 @@ impl McpClient {
             method: METHOD.into(),
             reason: reason.into(),
         };
+        // `x-mcp-header`:沒列過的工具沒有記錄,就不帶(規格:server 回 HeaderMismatch 時,client 應該重新 tools/list)。
+        let headers = self
+            .param_headers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .map(|h| headers::param_values(h, &arguments))
+            .unwrap_or_default();
         let mut params = Map::new();
         params.insert("name".into(), json!(name));
         params.insert("arguments".into(), Value::Object(arguments));
-        let result = self.request(METHOD, params).await?;
+        let result = self.request(METHOD, params, headers).await?;
         let Some(Value::Array(content)) = result.get("content") else {
             return Err(invalid("`content` must be an array"));
         };
@@ -234,7 +256,7 @@ impl McpClient {
 
     async fn discover(&self) -> Result<ServerInfo, McpError> {
         const METHOD: &str = "server/discover";
-        let result = match self.request(METHOD, Map::new()).await {
+        let result = match self.request(METHOD, Map::new(), Vec::new()).await {
             Ok(result) => result,
             // 規格(stdio「Backward Compatibility」):不是 2026-07-28 定義的錯誤、或一直不回,就是舊版 server。
             // 新版的錯誤(-32020 ~ -32022)原樣回報:對方是新版,只是不接受這個請求。
@@ -285,6 +307,7 @@ impl McpClient {
         &self,
         method: &str,
         mut params: Map<String, Value>,
+        headers: Vec<(String, String)>,
     ) -> Result<Map<String, Value>, McpError> {
         params.insert(
             "_meta".into(),
@@ -297,7 +320,8 @@ impl McpClient {
         );
         let response = tokio::time::timeout(
             self.options.request_timeout,
-            self.transport.request(method, Some(Value::Object(params))),
+            self.transport
+                .request_with_headers(method, Some(Value::Object(params)), headers),
         )
         .await
         // 逾時:`timeout` 把請求的 future 丟掉,傳輸會把它從等待名單拿掉、送出取消通知。
@@ -368,7 +392,8 @@ fn printable(text: &str, max: usize) -> String {
 }
 
 /// 檢查一個工具定義。名稱照規格的建議收緊成必須:名稱會進模型的 prompt,也會變成 agent 的工具名稱。
-fn parse_tool(value: Value) -> Result<Tool, RejectedTool> {
+/// 一起回傳它的 `x-mcp-header`(標註不合法的工具,規格要求排除)。
+fn parse_tool(value: Value) -> Result<(Tool, Vec<ParamHeader>), RejectedTool> {
     let Value::Object(mut tool) = value else {
         return Err(RejectedTool {
             name: None,
@@ -396,17 +421,19 @@ fn parse_tool(value: Value) -> Result<Tool, RejectedTool> {
             ));
         }
     };
+    let param_headers = headers::param_headers(&input_schema).map_err(|reason| reject(&reason))?;
     // 選填的文字欄位:不是字串就當作沒有。
     let mut text = |key: &str| match tool.remove(key) {
         Some(Value::String(s)) => Some(s),
         _ => None,
     };
-    Ok(Tool {
+    let tool = Tool {
         title: text("title"),
         description: text("description"),
         name,
         input_schema,
-    })
+    };
+    Ok((tool, param_headers))
 }
 
 /// 規格(server/tools「Tool Names」):1~128 個字元,只有 ASCII 英數字、`_`、`-`、`.`。

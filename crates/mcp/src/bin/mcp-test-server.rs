@@ -1,7 +1,11 @@
 //! 測試用的 MCP server(design-part2 §7、§9-4,D-051)。
 //!
-//!     mcp-test-server --stdio [--versions 2025-11-25,2026-07-28] [--legacy] [--no-tools]
-//!                             [--silent-discover] [--bad-tools] [--loop-cursor]
+//!     mcp-test-server --stdio [旗標…]
+//!     mcp-test-server --http <port> [旗標…] [--token T] [--sse] [--sse-request] [--sse-truncate] [--redirect]
+//!                                           [--text-response]
+//!
+//! 共用的旗標:`--versions V1,V2`、`--legacy`、`--no-tools`、`--silent-discover`、`--bad-tools`、`--loop-cursor`。
+//! HTTP 模式綁 127.0.0.1;port 給 0 由系統挑,實際的 URL 印在 stdout 的第一行(測試讀它)。
 //!
 //! 整合測試用 `env!("CARGO_BIN_EXE_mcp-test-server")` 找到它。CI 不必裝 Node 或 Python,而且可以照劇本故意出錯
 //! (真的 server 不會配合)。
@@ -13,6 +17,8 @@
 //! - `test/*`:測試傳輸(第 2 步),例如並行、故意送壞掉的訊息、帶著 stderr 結束。
 //! - MCP 本身(第 3 步,規格 2026-07-28):`server/discover`、`tools/list`(每頁 4 個)、`tools/call`。
 //!   每個請求都檢查 `_meta`(版本、client 能力),跟真的 server 一樣。命令列參數讓它扮演各種不配合的 server。
+//! - HTTP 模式(第 4 步)只有 MCP 的方法;另外檢查規格要求的 header(`MCP-Protocol-Version`、`Mcp-Method`、
+//!   `Mcp-Name`、`Mcp-Param-*`),不一致就回 400 + -32020,跟真的 server 一樣嚴格。
 
 use std::collections::HashMap;
 use std::process::ExitCode;
@@ -24,19 +30,26 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Stdout};
 use tokio::sync::oneshot;
 
-const USAGE: &str = "usage: mcp-test-server --stdio [--versions V1,V2] [--legacy] [--no-tools] \
-                     [--silent-discover] [--bad-tools] [--loop-cursor]";
+const USAGE: &str = "usage: mcp-test-server (--stdio | --http PORT) [--versions V1,V2] [--legacy] \
+                     [--no-tools] [--silent-discover] [--bad-tools] [--loop-cursor] \
+                     [--token T] [--sse] [--sse-request] [--sse-truncate] [--redirect] [--text-response]";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse_args(&args) {
-        Some(flags) => stdio(flags).await,
+        Some((Mode::Stdio, flags)) => stdio(flags).await,
+        Some((Mode::Http(port), flags)) => http(port, flags).await,
         None => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
         }
     }
+}
+
+enum Mode {
+    Stdio,
+    Http(u16),
 }
 
 /// 命令列參數:讓 server 扮演各種不配合的 server。
@@ -54,20 +67,40 @@ struct Flags {
     bad_tools: bool,
     /// `nextCursor` 永遠是同一個:不設上限的 client 會一直翻頁。
     loop_cursor: bool,
+    // ---- 只有 HTTP 模式用 ----
+    /// 要求 `Authorization: Bearer <token>`。
+    token: Option<String>,
+    /// 用 SSE 回應(先送一個通知,再送回應);預設回一份 JSON。
+    sse: bool,
+    /// SSE 串流裡先送一個 server 的請求(規格禁止)。
+    sse_request: bool,
+    /// SSE 串流送了通知就結束,沒有回應。
+    sse_truncate: bool,
+    /// 回 307 叫 client 改去 `/elsewhere`(client 不能跟過去)。
+    redirect: bool,
+    /// 回 200 但本文是 `text/plain`(不是 JSON 也不是 SSE)。
+    text_response: bool,
 }
 
-fn parse_args(args: &[String]) -> Option<Flags> {
-    let (first, rest) = args.split_first()?;
-    if first != "--stdio" {
-        return None;
-    }
+fn parse_args(args: &[String]) -> Option<(Mode, Flags)> {
+    let mut rest = args.iter();
+    let mode = match rest.next()?.as_str() {
+        "--stdio" => Mode::Stdio,
+        "--http" => Mode::Http(rest.next()?.parse().ok()?),
+        _ => return None,
+    };
     let mut flags = Flags {
         versions: vec!["2026-07-28".into()],
         ..Flags::default()
     };
-    let mut rest = rest.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
+            "--token" => flags.token = Some(rest.next()?.clone()),
+            "--sse" => flags.sse = true,
+            "--sse-request" => flags.sse_request = true,
+            "--sse-truncate" => flags.sse_truncate = true,
+            "--redirect" => flags.redirect = true,
+            "--text-response" => flags.text_response = true,
             "--versions" => flags.versions = rest.next()?.split(',').map(String::from).collect(),
             "--legacy" => flags.legacy = true,
             "--no-tools" => flags.no_tools = true,
@@ -77,7 +110,7 @@ fn parse_args(args: &[String]) -> Option<Flags> {
             _ => return None,
         }
     }
-    Some(flags)
+    Some((mode, flags))
 }
 
 /// 一個請求的處理結果。
@@ -376,6 +409,11 @@ impl Server {
             "mystery" => json!({"resultType": "mystery", "content": []}),
             // 舊版 server 的結果沒有 `resultType`:要當成 complete。
             "plain" => json!({"content": [{"type": "text", "text": "no resultType"}]}),
+            // HTTP 模式下,client 要把 `region` 複製到 `Mcp-Param-Region`(由 HTTP handler 檢查)。
+            "region" => text(format!(
+                "region={}",
+                field(args, "region").as_str().unwrap_or("")
+            )),
             _ => return error(-32602, format!("Unknown tool: {name}")),
         };
         Reply::Result(result)
@@ -402,6 +440,10 @@ fn tool_definitions(bad: bool) -> Vec<Value> {
         json!({"name": "ask", "description": "Asks for more input.", "inputSchema": no_args}),
         json!({"name": "mystery", "description": "Returns an unknown result type.", "inputSchema": no_args}),
         json!({"name": "plain", "inputSchema": no_args}),
+        json!({"name": "region", "description": "Answers with the region it was given.",
+               "inputSchema": {"type": "object", "properties": {
+                   "region": {"type": "string", "x-mcp-header": "Region"}, "query": {"type": "string"}
+               }, "required": ["region"]}}),
     ];
     if bad {
         tools.extend([
@@ -409,6 +451,10 @@ fn tool_definitions(bad: bool) -> Vec<Value> {
             json!({"name": "no_schema"}),
             json!({"name": "array_schema", "inputSchema": {"type": "array"}}),
             json!("not an object"),
+            // `x-mcp-header` 標在小數參數上:規格不允許,整個工具要被排除。
+            json!({"name": "bad_header", "inputSchema": {"type": "object", "properties": {
+                "n": {"type": "number", "x-mcp-header": "N"}
+            }}}),
         ]);
     }
     tools
@@ -470,4 +516,248 @@ async fn stdio(flags: Flags) -> ExitCode {
     // 立刻結束的話,kill 跟「自己結束」常常分不出先後,測試就看不出 client 有沒有等。
     tokio::time::sleep(Duration::from_millis(100)).await;
     ExitCode::SUCCESS
+}
+
+// ---- HTTP 模式(第 4 步)----
+
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+
+async fn http(port: u16, flags: Flags) -> ExitCode {
+    let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await else {
+        eprintln!("cannot bind 127.0.0.1:{port}");
+        return ExitCode::from(1);
+    };
+    let Ok(address) = listener.local_addr() else {
+        return ExitCode::from(1);
+    };
+    // 測試讀這一行拿到 URL。`println!` 之後要 flush:stdout 接到 pipe 時是整塊緩衝的。
+    println!("http://{address}/mcp");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let server = Arc::new(Server {
+        out: tokio::sync::Mutex::new(tokio::io::stdout()),
+        waiting: Mutex::new(HashMap::new()),
+        linger: AtomicBool::new(false),
+        flags,
+        cancelled: Mutex::new(Vec::new()),
+    });
+    let app = axum::Router::new()
+        .route("/mcp", axum::routing::post(handle_http))
+        // redirect 的目的地:有人來就記一筆(測試確認 client 沒有跟過來)。
+        .route("/elsewhere", axum::routing::any(elsewhere))
+        .route("/hits", axum::routing::get(hits))
+        .with_state(server);
+    match axum::serve(listener, app).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::from(1),
+    }
+}
+
+static ELSEWHERE_HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+async fn elsewhere() -> StatusCode {
+    ELSEWHERE_HITS.fetch_add(1, Ordering::SeqCst);
+    StatusCode::OK
+}
+
+async fn hits() -> String {
+    ELSEWHERE_HITS.load(Ordering::SeqCst).to_string()
+}
+
+fn rpc_error(
+    status: StatusCode,
+    id: &Value,
+    code: i64,
+    message: &str,
+    data: Option<Value>,
+) -> Response {
+    let mut error = json!({"code": code, "message": message});
+    if let (Some(data), Some(object)) = (data, error.as_object_mut()) {
+        object.insert("data".into(), data);
+    }
+    let body = json!({"jsonrpc": "2.0", "id": id, "error": error});
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(name)?.to_str().ok()?;
+    // `=?base64?…?=` 解回原本的值(規格 Value Encoding)。
+    match raw
+        .strip_prefix("=?base64?")
+        .and_then(|r| r.strip_suffix("?="))
+    {
+        Some(encoded) => String::from_utf8(decode_base64(encoded)?).ok(),
+        None => Some(raw.to_owned()),
+    }
+}
+
+/// 標準 Base64 解碼。故意不用 client 的編碼器(server 跟 client 共用程式碼的話,錯誤會對稱、測不出來)。
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let text = text.trim_end_matches('=').as_bytes();
+    let mut out = Vec::new();
+    let (mut buffer, mut bits) = (0u32, 0u32);
+    for &c in text {
+        buffer = (buffer << 6) | value(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(u8::try_from((buffer >> bits) & 0xff).ok()?);
+        }
+    }
+    Some(out)
+}
+
+async fn handle_http(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let flags = &server.flags;
+    if flags.redirect {
+        return (
+            StatusCode::TEMPORARY_REDIRECT,
+            [(header::LOCATION, "/elsewhere")],
+        )
+            .into_response();
+    }
+    if flags.text_response {
+        return ([(header::CONTENT_TYPE, "text/plain")], "hello").into_response();
+    }
+    if let Some(token) = &flags.token {
+        let expected = format!("Bearer {token}");
+        if headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            != Some(expected.as_str())
+        {
+            return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        }
+    }
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !(accept.contains("application/json") && accept.contains("text/event-stream")) {
+        return (
+            StatusCode::NOT_ACCEPTABLE,
+            "Accept must list application/json and text/event-stream",
+        )
+            .into_response();
+    }
+    let Ok(message) = serde_json::from_str::<Value>(&body) else {
+        return rpc_error(
+            StatusCode::BAD_REQUEST,
+            &Value::Null,
+            -32700,
+            "Parse error",
+            None,
+        );
+    };
+    let method = field(&message, "method").as_str().unwrap_or("").to_owned();
+    let params = field(&message, "params").clone();
+    // 通知:接受就回 202,沒有本文。
+    let Some(id) = message.get("id").cloned() else {
+        return StatusCode::ACCEPTED.into_response();
+    };
+    // ---- header 跟 body 要一致(規格 Server Validation)----
+    let mismatch = |what: &str| {
+        rpc_error(
+            StatusCode::BAD_REQUEST,
+            &id,
+            -32020,
+            &format!("header mismatch: {what}"),
+            None,
+        )
+    };
+    let version = field(
+        field(&params, "_meta"),
+        "io.modelcontextprotocol/protocolVersion",
+    )
+    .as_str();
+    if header_value(&headers, "mcp-protocol-version").as_deref() != version {
+        return mismatch("MCP-Protocol-Version");
+    }
+    if header_value(&headers, "mcp-method").as_deref() != Some(method.as_str()) {
+        return mismatch("Mcp-Method");
+    }
+    if method == "tools/call" {
+        let name = field(&params, "name").as_str();
+        if header_value(&headers, "mcp-name").as_deref() != name {
+            return mismatch("Mcp-Name");
+        }
+        if name == Some("region")
+            && header_value(&headers, "mcp-param-region").as_deref()
+                != field(field(&params, "arguments"), "region").as_str()
+        {
+            return mismatch("Mcp-Param-Region");
+        }
+    }
+    let reply = match server.mcp(&method, &params).await {
+        Some(reply) => reply,
+        None => return rpc_error(StatusCode::NOT_FOUND, &id, -32601, "Method not found", None),
+    };
+    let response = match reply {
+        Reply::Result(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        Reply::Error(code, message, data) => {
+            // 規格:版本不支援、少了必填的 _meta → 400;其他錯誤(例如不認得的工具)照常回 200 + 錯誤。
+            let status = if matches!(code, -32022 | -32602) && method != "tools/call" {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::OK
+            };
+            return rpc_error(status, &id, code, &message, data);
+        }
+        Reply::Silent => {
+            std::future::pending::<()>().await;
+            return StatusCode::NO_CONTENT.into_response();
+        }
+    };
+    if !flags.sse {
+        // 帶 charset 參數:client 要看 media type 本身,不能整串比對。
+        return (
+            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            response.to_string(),
+        )
+            .into_response();
+    }
+    // SSE:先送一個註解、一個空資料的事件(舊版規格建議的「預備」事件)、一個通知,client 都要略過;最後是回應。
+    let mut events = String::new();
+    events.push_str(": keep-alive comment\n\n");
+    events.push_str("id: 0\ndata:\n\n");
+    let progress =
+        json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progress": 1}});
+    events.push_str(&format!("event: message\ndata: {progress}\n\n"));
+    if flags.sse_request {
+        let request = json!({"jsonrpc": "2.0", "id": "s-1", "method": "sampling/createMessage", "params": {}});
+        events.push_str(&format!("data: {request}\n\n"));
+    }
+    if !flags.sse_truncate {
+        // 把 JSON 拆成好幾行 `data:`:SSE 會用換行接回來,JSON 允許中間有換行。
+        let text = serde_json::to_string_pretty(&response).unwrap_or_default();
+        for line in text.lines() {
+            events.push_str(&format!("data: {line}\n"));
+        }
+        events.push('\n');
+    }
+    Response::builder()
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(events))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
