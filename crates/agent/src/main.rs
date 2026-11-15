@@ -250,11 +250,7 @@ async fn connect_mcp(
                 Box::new(HttpTransport::new(&config, HttpLimits::default()).with_context(context)?)
             }
         };
-        let options = ClientOptions {
-            name: "ai-engineering-lab-agent".into(),
-            ..ClientOptions::default()
-        };
-        let client = McpClient::connect(transport, options)
+        let client = McpClient::connect(transport, ClientOptions::default())
             .await
             .with_context(context)?;
         let list = match client.list_tools().await {

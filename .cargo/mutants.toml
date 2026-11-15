@@ -33,4 +33,15 @@ exclude_re = [
     # 等價:Pratt parser 的 binding power 刻意一奇一偶(1/2、3/4、8/7),最小值只會是 0、2、4、5、7,
     # 左邊的 power 永遠不會等於最小值,`<` 換成 `<=` 行為不變(003 design §7)。
     'crates/agent/src/tools/calculator\.rs:\d+:\d+: replace < with <= in Parser::expr',
+    # 等價(同 flush_records):agent CLI 結束前關閉 MCP 連線。不關的話 client 被 drop、子行程被 kill_on_drop 收掉,
+    # E2E 看不出差別;「關閉時先等再 kill」由 mcp 的 stdio 測試負責(003 第二部分)。
+    'crates/agent/src/main\.rs:\d+:\d+: replace close_mcp with \(\)',
+    # 等價:base64 把三個位元組位移到 16、8、0 位再合起來,彼此不重疊,`|` 換成 `^` 結果一樣。
+    'crates/mcp/src/headers\.rs:\d+:\d+: replace \| with \^ in base64',
+    # 不值得測:錯誤本文最多讀 64 * 1024 bytes,換成 64 + 1024 只是常數變了(同 gateway 的 10 * 60)。
+    'crates/mcp/src/transport/http\.rs:\d+:\d+: replace \* with \+',
+    # 不值得測(同 llm 的 read_capped):只有長度剛好等於上限時才不同,而 SSE 串流與 JSON 本文的位元組數
+    # 取決於 server 的排版與網路分塊;上限本身另有測試(超過就 TooLarge、之後照常)。
+    'crates/mcp/src/transport/http\.rs:\d+:\d+: replace > with >= in HttpTransport::read_stream',
+    'crates/mcp/src/transport/http\.rs:\d+:\d+: replace > with >= in read_capped',
 ]

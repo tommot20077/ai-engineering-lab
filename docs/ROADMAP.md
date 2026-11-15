@@ -229,6 +229,8 @@
   **2026-11-15 又發生一次**(`117e392`,003 第二部分第 2 步):628 個 mutant 跑到 37 分鐘,runner 收到 shutdown 訊號,只拿到 1 個結果。
   原因沒有確定;已經把測試用的 MCP server(`crates/mcp/src/bin/`)排除在 mutants 之外(它被改壞時最可能卡住或一直吃資源)。
   如果之後還發生,就要決定上面的記憶體上限。
+  **分支累積比較跑不完**(2026-11-15,`20d6337`):003 第二部分整個分支累積的 mutant 太多,60 分鐘的上限到了被取消,
+  只拿到前段的結果(11 個 MISSED,已處理)。要決定:分支只比較最近幾個 commit、提高上限、或分 crate 平行跑。
 - **跑 MCP 的 live 測試**(003 第二部分第 6 步):在有 Node 的機器上跑 `cargo test -p mcp --test live -- --ignored`
   (stdio 由測試自己用 npx 啟動;HTTP 要先 `PORT=3001 npx -y @modelcontextprotocol/server-everything@2.3.0 streamableHttp`)。
   有不一致就從真的 server 錄下訊息當測試資料。雲端開發環境的權限不允許執行從 npm 下載的程式,所以還沒跑過。

@@ -100,6 +100,8 @@ async fn a_discover_result_without_supported_versions_is_invalid() {
     for result in [
         json!({"capabilities": {"tools": {}}}),
         json!({"supportedVersions": "2026-07-28", "capabilities": {"tools": {}}}),
+        // 混了不是字串的:整個不合法(不是略過那一個)。
+        json!({"supportedVersions": [5, "2026-07-28"], "capabilities": {"tools": {}}}),
     ] {
         let (result, _) = connect_fake(vec![discover(result)]).await;
         assert_eq!(
@@ -476,4 +478,17 @@ async fn call_tool_sends_the_header_values_of_listed_tools() {
         [("Region".to_owned(), "=?base64?5pel5pys?=".to_owned())]
     );
     assert_eq!(headers[3], []);
+}
+
+#[test]
+fn the_mcp_error_codes_are_the_ones_in_the_spec() {
+    // 數值由規格決定(basic §Error Codes);寫錯的話,`-32020`~`-32022` 會被當成舊版 server 的錯誤(cargo-mutants:拿掉負號沒有測試失敗)。
+    assert_eq!(
+        [
+            HEADER_MISMATCH,
+            MISSING_REQUIRED_CLIENT_CAPABILITY,
+            UNSUPPORTED_PROTOCOL_VERSION
+        ],
+        [-32020, -32021, -32022]
+    );
 }

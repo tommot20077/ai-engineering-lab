@@ -58,6 +58,11 @@ fn a_parameter_named_x_mcp_header_is_just_a_parameter() {
     // `properties` 底下的 key 是參數名稱,不是關鍵字。
     let schema = json!({"type": "object", "properties": {"x-mcp-header": {"type": "string"}}});
     assert_eq!(param_headers(&schema), Ok(vec![]));
+    // 不可達位置(陣列的 items)底下的 `properties` 也一樣:key 是名稱,不是標註。
+    let schema = json!({"type": "object", "properties": {"list": {"type": "array", "items": {
+        "type": "object", "properties": {"x-mcp-header": {"type": "string"}}
+    }}}});
+    assert_eq!(param_headers(&schema), Ok(vec![]));
 }
 
 #[test]

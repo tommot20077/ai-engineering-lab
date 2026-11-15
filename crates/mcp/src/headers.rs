@@ -87,7 +87,7 @@ fn scan<'a>(
                             scan(sub, None, found, stray);
                         }
                     }
-                    ("x-mcp-header", _, _) => {}
+                    // 其他關鍵字(包括 `x-mcp-header` 自己的值,通常是字串)往下找,位置都算不可達。
                     _ => scan(value, None, found, stray),
                 }
             }
