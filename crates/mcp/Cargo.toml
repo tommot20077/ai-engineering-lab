@@ -14,7 +14,15 @@ workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# `BoxFuture`:`Transport` 要能放進 `Box<dyn Transport>`(stdio 與 HTTP 兩種實作,執行期依設定選)。
+futures.workspace = true
+# process:啟動 stdio 的 server(子行程);io-util:一行一行讀寫;sync:`oneshot` 與 `Mutex`;
+# rt:背景 task(讀 stdout、讀 stderr);time:關閉時等子行程結束的上限。
+# io-std + macros:測試 server(`src/bin`)讀自己的 stdin、`#[tokio::main]`。
+tokio = { workspace = true, features = ["process", "io-util", "io-std", "sync", "rt", "time", "macros"] }
 
 [dev-dependencies]
+# `#[tokio::test]`。
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 # 任意輸入都不 panic;編碼之後再解析回來要一樣。
 proptest.workspace = true

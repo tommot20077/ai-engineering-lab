@@ -86,11 +86,13 @@ client ── tools/call(name、arguments)──→ result(content[]、isError)
 
 ```rust
 trait Transport: Send + Sync {
-    fn request(&self, method: &str, params: Value) -> BoxFuture<'_, Result<Value, McpError>>;
-    fn notify(&self, method: &str, params: Value) -> BoxFuture<'_, Result<(), McpError>>;
+    fn request<'a>(&'a self, method: &'a str, params: Option<Value>) -> BoxFuture<'a, Result<Value, McpError>>;
+    fn notify<'a>(&'a self, method: &'a str, params: Option<Value>) -> BoxFuture<'a, Result<(), McpError>>;
     fn close(self: Box<Self>) -> BoxFuture<'static, ()>;
 }
 ```
+
+(`params` 是 `Option`:`ping` 之類的請求沒有參數;第 2 步實作時改。)
 
 **stdio**:
 
@@ -99,6 +101,26 @@ trait Transport: Send + Sync {
 - 一行一則 JSON 訊息(規格要求訊息裡不能有換行)。一行的上限 4 MiB:超過就關掉連線(不可信的輸入要有上限)。
 - 一個背景 task 讀 stdout,依 `id` 把回應交給等待中的請求(`oneshot` channel);stderr 另一個 task 讀,只保留最後幾 KB 給錯誤訊息用。
 - 關閉:關 stdin → 等最多幾秒 → kill。
+
+**實作時定下的(第 2 步,`transport/stdio.rs`)**:
+
+- **環境變數**:`StdioConfig.env` 就是子行程的全部環境變數。`PATH`、`HOME`、`LANG` 由組裝的地方(agent 的 CLI,第 5 步)
+  明確放進來,不在 library 裡讀(D-016:library 不讀環境變數)。
+- **錯誤**(`McpError`,`Clone`:連線斷掉時同一個原因要交給每個等待中的請求):`Spawn`(啟動不了)、`Rpc`(server 回 error,
+  連線照常)、`Protocol`(不是合法的 JSON-RPC、不是 UTF-8)、`TooLarge`(一則訊息超過上限)、`Closed { stderr }`(server 走了)。
+  後三種關掉連線,之後的請求與通知立刻拿到同一個原因,不再送出。
+- **上限**放 `StdioLimits`(測試可以改小):一則訊息 4 MiB,算換行之前的位元組;讀的時候 `take(limit + 1)`,
+  對方一直不送換行也不會一直讀。關閉的寬限 2 秒。
+- **一行斷在一半就結束**是 `Closed`(server 死了),不是 `Protocol`。空行略過。
+- **不認得的 id**(含字串 id)略過:可能是已經放棄等待的請求晚到的回應。請求的 future 被 drop(逾時、取消)時,
+  靠一個 `Drop` guard 把它從等待名單拿掉。
+- **server 反問**的回應不回顯對方的 method(不可信的內容不送回去),固定訊息 `this client only supports tools`。
+- **stderr**:背景 task 一直讀(不讀的話 pipe 滿了 server 會卡住),只留最後 4 KiB;控制字元換成 `?`、`\r` 拿掉(會印到終端機)。
+  stdout 結束後最多等 1 秒讓 stderr 讀完,錯誤訊息才有 server 最後說的話。
+- **關閉**:`StdioTransport::shutdown(self)` 回傳結束狀態(測試用來分辨「自己結束」與「被 kill」);trait 的 `close` 呼叫它。
+  沒呼叫就 drop 時,`kill_on_drop` 收掉子行程。
+- **測試 server** 不用 `mcp::jsonrpc`,直接操作 `serde_json::Value`:跟 client 共用 parser 的話,parser 的 bug 兩邊對稱,測試看不出來。
+  傳輸用的方法都在 `test/*` 底下;收到 EOF 後花 100 ms 收尾,client 有沒有等它才看得出來。
 
 **Streamable HTTP**:
 
@@ -153,7 +175,7 @@ tools = ["lookup"]
 | # | 內容 | 主要 Rust 概念 |
 |---|---|---|
 | 1 | `crates/mcp` 骨架、JSON-RPC 訊息型別 **(完成)** | serde 的 `untagged` enum、`#[serde(flatten)]` |
-| 2 | stdio 傳輸 + 測試 server(stdio) | `tokio::process`、背景 task、`oneshot`、`HashMap<id, Sender>`、`kill_on_drop` |
+| 2 | stdio 傳輸 + 測試 server(stdio)**(完成)** | `tokio::process`、背景 task、`oneshot`、`HashMap<id, Sender>`、`kill_on_drop` |
 | 3 | `McpClient`:initialize、版本協商、tools/list 分頁、tools/call | async 的狀態流程、錯誤分類 |
 | 4 | HTTP 傳輸 + 測試 server(HTTP) | reqwest 不跟 redirect、SSE 串流裡找回應、同一組測試跑兩種傳輸 |
 | 5 | agent 整合:`McpTool`、`[[mcp]]` 設定、白名單、E2E | `jsonschema` 編譯一次重複用、`Box<dyn ErasedTool>` 混著內建與 MCP 工具 |
