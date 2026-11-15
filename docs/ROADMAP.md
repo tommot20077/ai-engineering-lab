@@ -60,13 +60,16 @@
   **結果**:給工具 38.9% → 100%(+61.1 [+38.9, +83.3],全部來自日期與檔案題);Haiku 對 Sonnet 18/18 對 18/18(天花板,A/A 也是 0),
   Sonnet 貴 17.7 倍;injection 沒成功;真的跑抓到 001 的 bug(沒有參數片段的工具呼叫組成空字串,修在 `Accumulator`)。花 $0.158。
 - **003 第二部分(MCP client)**:設計已定案 `docs/modules/003-agent-runtime/design-part2.md`(D-047~D-051,§9 五個小決定都照建議)。
-- 第二部分完成到第 5 步:`crates/mcp` 骨架與 JSON-RPC 訊息型別(第 1 步)、`Transport` trait + stdio 傳輸 + 測試用的 MCP server(第 2 步)、
+- **003 第二部分(MCP client)完成**(2026-11-15,第 1~6 步),回顧見 `retro.md` 的第二部分,使用說明見 `crates/mcp/README.md`。
+  內容:`crates/mcp` 骨架與 JSON-RPC 訊息型別(第 1 步)、`Transport` trait + stdio 傳輸 + 測試用的 MCP server(第 2 步)、
   `McpClient`(第 3 步:協定 2026-07-28,`server/discover` 探測、tools/list 分頁、tools/call、逾時與取消)、
   Streamable HTTP 傳輸(第 4 步:header、JSON 或 SSE 回應、`x-mcp-header`、不跟 redirect;client 的測試兩種傳輸各跑一次)、
   agent 整合(第 5 步:`McpTool` + jsonschema 驗證、`[[mcp]]` 設定與白名單、E2E)。
 - **MCP 規格改版**(第 3 步開工時查到,D-052):最新版 2026-07-28 是無狀態的,拿掉了 `initialize` 與 `Mcp-Session-Id`;
   設計照 §9-2「只支援最新的一版」改寫,細節在 design-part2 §4。
-- **下一步**:003 第二部分第 6 步:對真的參考 server 跑一次(`#[ignore]`)、README、retro。
+- **live 測試還沒跑**:`crates/mcp/tests/live.rs`(對官方參考 server)寫好了,但雲端環境不允許執行從 npm 下載的程式;
+  要在自己的機器上跑 `cargo test -p mcp --test live -- --ignored`(見待辦)。
+- **下一步**:003 第三部分(沙箱):先寫 `design-part3.md`;設計分岔由 Claude 先選建議方案並標明(使用者 2026-11-15 交代)。
 - **使用者交代(2026-11-15)**:003 全部做完再一起看;第三部分的設計分岔由 Claude 先選建議方案、在文件裡標明,使用者看的時候可以推翻。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
@@ -139,7 +142,7 @@
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 完成:第一部分(第 1~11 步,第一次真的比較)、第二部分(資料集與評審校準,第二次比較);回顧見 `retro.md` |
-| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 第一部分完成(loop + 內建工具,第 1~7 步,回顧見 `retro.md`);第二部分 MCP、第三部分沙箱待設計(D-041) |
+| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 第一部分完成(loop + 內建工具,第 1~7 步);第二部分完成(MCP client,第 1~6 步);回顧見 `retro.md`;第三部分沙箱進行中(D-041) |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
 
@@ -224,6 +227,9 @@
   **2026-11-15 又發生一次**(`117e392`,003 第二部分第 2 步):628 個 mutant 跑到 37 分鐘,runner 收到 shutdown 訊號,只拿到 1 個結果。
   原因沒有確定;已經把測試用的 MCP server(`crates/mcp/src/bin/`)排除在 mutants 之外(它被改壞時最可能卡住或一直吃資源)。
   如果之後還發生,就要決定上面的記憶體上限。
+- **跑 MCP 的 live 測試**(003 第二部分第 6 步):在有 Node 的機器上跑 `cargo test -p mcp --test live -- --ignored`
+  (stdio 由測試自己用 npx 啟動;HTTP 要先 `PORT=3001 npx -y @modelcontextprotocol/server-everything@2.3.0 streamableHttp`)。
+  有不一致就從真的 server 錄下訊息當測試資料。雲端開發環境的權限不允許執行從 npm 下載的程式,所以還沒跑過。
 - **呼叫紀錄記上它屬於哪次 agent 執行**(003 design §6):agent 一次執行有好幾次模型呼叫,各自是一筆紀錄,
   目前無法從紀錄看出它們屬於同一次執行(每筆的 request 含到那一輪為止的完整對話,所以最後一筆有全貌)。
   要改 `CallRecord` 的格式(`schema_version` 加一),等 006 分析紀錄時再決定。
