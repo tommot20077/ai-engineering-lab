@@ -60,8 +60,12 @@
   **結果**:給工具 38.9% → 100%(+61.1 [+38.9, +83.3],全部來自日期與檔案題);Haiku 對 Sonnet 18/18 對 18/18(天花板,A/A 也是 0),
   Sonnet 貴 17.7 倍;injection 沒成功;真的跑抓到 001 的 bug(沒有參數片段的工具呼叫組成空字串,修在 `Accumulator`)。花 $0.158。
 - **003 第二部分(MCP client)**:設計已定案 `docs/modules/003-agent-runtime/design-part2.md`(D-047~D-051,§9 五個小決定都照建議)。
-- 第二部分完成到第 2 步:`crates/mcp` 骨架與 JSON-RPC 訊息型別(第 1 步)、`Transport` trait + stdio 傳輸 + 測試用的 MCP server(第 2 步)。
-- **下一步**:003 第二部分第 3 步:`McpClient`(initialize、版本協商、tools/list 分頁、tools/call)。
+- 第二部分完成到第 3 步:`crates/mcp` 骨架與 JSON-RPC 訊息型別(第 1 步)、`Transport` trait + stdio 傳輸 + 測試用的 MCP server(第 2 步)、
+  `McpClient`(第 3 步:協定 2026-07-28,`server/discover` 探測、tools/list 分頁、tools/call、逾時與取消)。
+- **MCP 規格改版**(第 3 步開工時查到,D-052):最新版 2026-07-28 是無狀態的,拿掉了 `initialize` 與 `Mcp-Session-Id`;
+  設計照 §9-2「只支援最新的一版」改寫,細節在 design-part2 §4。
+- **下一步**:003 第二部分第 4 步:Streamable HTTP 傳輸 + 測試 server(HTTP)。
+- **使用者交代(2026-11-15)**:003 全部做完再一起看;第三部分的設計分岔由 Claude 先選建議方案、在文件裡標明,使用者看的時候可以推翻。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -123,6 +127,7 @@
 | D-049 | MCP 工具的參數用 `jsonschema` crate 驗證(server 給的 schema,啟動時編譯) | 參數來自模型、不可信;JSON Schema 驗證不是 AI 核心機制,自己寫只會不完整 | 2026-11-14 |
 | D-050 | MCP 工具白名單:`agent.toml` 為每個 server 列出允許的工具;名稱加 server 前綴;子行程清空環境變數 | server 給的名稱與說明會進 prompt(可能藏 injection);server 升級多出的工具不能自動給模型;API key 不能漏給第三方程式 | 2026-11-14 |
 | D-051 | MCP 的測試用自己寫的測試 server(stdio 與 HTTP,可以故意出錯);另寫 `#[ignore]` 測試對真的參考 server 跑 | CI 不需要 Node / Python;能製造錯誤;第一部分的教訓是假的要跟真的對過 | 2026-11-14 |
+| D-052 | MCP 協定版本 2026-07-28(無狀態):沒有 `initialize`,每個請求在 `params._meta` 帶版本、client 能力(空的)、client 名稱;連線時用 `server/discover` 探測(舊版 server 得到明確的錯誤);結果的 `resultType` 缺少時當 `complete`,`input_required` 不支援;放棄的請求送 `notifications/cancelled` | 照 §9-2「只支援當時最新的一版」。設計時憑記憶寫了 `initialize`,實作前查規格才發現已經改版(§4 要求「先讀規格確認」,這次真的派上用場);舊版 server 不支援,Tier 1 SDK 都已支援新版 | 2026-11-15 |
 
 ## 模組
 
@@ -214,6 +219,9 @@
 - **Mutants (diff) 沒有記憶體上限**(003 第 2 步發現):失控的 mutant(無窮迴圈又一直配置記憶體)會吃光 runner 的記憶體,
   整個 job 被關掉、沒有任何結果,而不是只有那個 mutant 失敗。這次從 calculator 的 lexer 結構上修掉了;要不要在 workflow 給測試程序
   記憶體上限(例如 `systemd-run --scope -p MemoryMax=` 或只對測試 binary 設 `ulimit -v`,rustc 本身需要大量虛擬記憶體),等再發生再決定。
+  **2026-11-15 又發生一次**(`117e392`,003 第二部分第 2 步):628 個 mutant 跑到 37 分鐘,runner 收到 shutdown 訊號,只拿到 1 個結果。
+  原因沒有確定;已經把測試用的 MCP server(`crates/mcp/src/bin/`)排除在 mutants 之外(它被改壞時最可能卡住或一直吃資源)。
+  如果之後還發生,就要決定上面的記憶體上限。
 - **呼叫紀錄記上它屬於哪次 agent 執行**(003 design §6):agent 一次執行有好幾次模型呼叫,各自是一筆紀錄,
   目前無法從紀錄看出它們屬於同一次執行(每筆的 request 含到那一輪為止的完整對話,所以最後一筆有全貌)。
   要改 `CallRecord` 的格式(`schema_version` 加一),等 006 分析紀錄時再決定。

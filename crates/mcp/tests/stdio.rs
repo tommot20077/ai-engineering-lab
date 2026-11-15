@@ -154,6 +154,36 @@ async fn a_request_that_is_given_up_on_is_forgotten() {
 }
 
 #[tokio::test]
+async fn a_request_that_is_given_up_on_is_cancelled() {
+    // 規格(stdio「Cancellation」):放棄的請求要送 `notifications/cancelled`,server 才能停下來。
+    // 這是這條連線的第一個請求,id 是 1。取消通知由背景 task 送出,稍等一下才到。
+    let t = start();
+    let request = t.request("test/sleep", Some(json!({"ms": 2000, "value": "late"})));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), request)
+            .await
+            .is_err()
+    );
+    let mut cancelled = json!([]);
+    for _ in 0..50 {
+        cancelled = call(&t, "test/cancelled", json!({})).await.unwrap();
+        if cancelled != json!([]) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(cancelled, json!([1]));
+}
+
+#[tokio::test]
+async fn a_request_that_got_its_answer_is_not_cancelled() {
+    let t = start();
+    assert_eq!(call(&t, "test/echo", json!(1)).await, Ok(json!(1)));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(call(&t, "test/cancelled", json!({})).await, Ok(json!([])));
+}
+
+#[tokio::test]
 async fn notify_sends_without_waiting() {
     // 測試 server 不回應通知;送出後連線照常(通知沒有 id,不會被當成請求等下去)。
     let t = start();

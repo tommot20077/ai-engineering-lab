@@ -27,6 +27,46 @@ pub enum McpError {
     /// 連線已經結束(server 結束了、關掉了 stdout、寫入失敗)。`stderr` 是 server 最後印出的幾 KB,常常就是原因。
     #[error("the MCP server closed the connection{}", stderr_suffix(.stderr))]
     Closed { stderr: String },
+
+    /// 等不到回應(`ClientOptions::request_timeout`)。這個請求已經送出取消通知,連線照常。
+    #[error("the MCP server did not answer `{method}` in time")]
+    Timeout { method: String },
+
+    /// server 不支援我們的協定版本(只支援一個,design-part2 §9-2)。`supported` 是它說它支援的(已經整理成可以印的字串)。
+    #[error(
+        "the MCP server does not support protocol version {}; it supports: {}",
+        crate::client::PROTOCOL_VERSION,
+        list_or_none(.supported)
+    )]
+    UnsupportedVersion { supported: Vec<String> },
+
+    /// `server/discover` 回了不是 2026-07-28 定義的錯誤,或是一直不回:多半是舊版(2025-11-25 以前、要 `initialize`)的 server。
+    #[error(
+        "the MCP server does not speak protocol version {version} (it may be an older server that needs `initialize`, \
+         which this client does not support): {0}",
+        version = crate::client::PROTOCOL_VERSION
+    )]
+    NotModern(String),
+
+    /// server 的 capabilities 裡沒有 `tools`。
+    #[error("the MCP server does not offer tools")]
+    NoTools,
+
+    /// 結果的格式不對(少了必填的欄位、型別錯、翻頁沒完沒了)。連線照常,只是這個結果不能用。
+    #[error("the MCP server sent an invalid `{method}` result: {reason}")]
+    InvalidResult { method: String, reason: String },
+
+    /// server 要求更多輸入(multi round-trip request)。我們沒有宣告任何 client 能力,不支援。
+    #[error("the MCP server asked for more input, which this client does not support")]
+    InputRequired,
+}
+
+fn list_or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        "(none)".into()
+    } else {
+        items.join(", ")
+    }
 }
 
 /// `#[error]` 裡可以呼叫函式:`.stderr` 是欄位的參考。stderr 是空的就不印後半段。
@@ -57,6 +97,21 @@ mod tests {
             }
             .to_string(),
             "the MCP server closed the connection; its stderr ends with:\nboom"
+        );
+    }
+
+    #[test]
+    fn unsupported_version_lists_what_the_server_supports() {
+        assert_eq!(
+            McpError::UnsupportedVersion {
+                supported: vec!["2025-06-18".into(), "2025-11-25".into()]
+            }
+            .to_string(),
+            "the MCP server does not support protocol version 2026-07-28; it supports: 2025-06-18, 2025-11-25"
+        );
+        assert_eq!(
+            McpError::UnsupportedVersion { supported: vec![] }.to_string(),
+            "the MCP server does not support protocol version 2026-07-28; it supports: (none)"
         );
     }
 }

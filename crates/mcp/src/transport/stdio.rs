@@ -114,9 +114,11 @@ impl Shared {
         }
     }
 
-    fn forget(&self, id: i64) {
-        if let State::Open(pending) = &mut *self.lock() {
-            pending.remove(&id);
+    /// 拿掉一筆。回傳它原本還在不在(還在 = 回應沒來,請求被放棄了)。
+    fn forget(&self, id: i64) -> bool {
+        match &mut *self.lock() {
+            State::Open(pending) => pending.remove(&id).is_some(),
+            State::Closed(_) => false,
         }
     }
 
@@ -146,18 +148,34 @@ impl Shared {
     }
 }
 
-/// 請求的 future 被 drop 時(逾時、呼叫端被取消),把它從等待名單拿掉。
+/// 請求的 future 被 drop 時(逾時、呼叫端被取消),把它從等待名單拿掉;回應還沒來的話,通知 server 取消。
 ///
 /// RAII:Rust 沒有 `finally`,「離開時一定要做的事」放在一個值的 `Drop` 裡;不管正常回傳、`?` 提早回傳、
 /// 還是 future 被丟掉,這個值都會被 drop。Java 的 try-with-resources 是同一個想法,只是 Rust 不必寫 `try`。
 struct Forget<'a> {
     shared: &'a Shared,
+    stdin: &'a SharedStdin,
     id: i64,
 }
 
 impl Drop for Forget<'_> {
     fn drop(&mut self) {
-        self.shared.forget(self.id);
+        if !self.shared.forget(self.id) {
+            return;
+        }
+        // 規格(stdio「Cancellation」):放棄的請求要送 `notifications/cancelled`,server 才能停下來。
+        // `drop` 不能 `.await`,寫入交給一個新的 task。`try_current`:runtime 已經在關閉時就不送了。
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let stdin = Arc::clone(self.stdin);
+        let line = jsonrpc::notification(
+            "notifications/cancelled",
+            Some(serde_json::json!({"requestId": self.id, "reason": "the client stopped waiting"})),
+        );
+        runtime.spawn(async move {
+            let _ = write_line(&stdin, &line).await;
+        });
     }
 }
 
@@ -276,6 +294,7 @@ impl StdioTransport {
         let response = self.shared.register(id)?;
         let _forget = Forget {
             shared: &self.shared,
+            stdin: &self.stdin,
             id,
         };
         self.send(&jsonrpc::request(id, method, params)).await?;
@@ -377,7 +396,8 @@ async fn read_stdout(task: ReadStdout) {
         }
         match jsonrpc::parse(text) {
             Ok(Incoming::Response { id, outcome }) => shared.deliver(id, outcome),
-            // server 反問(sampling 之類):不支援(design-part2 §1)。不把對方的 method 放進訊息:不回顯不可信的內容。
+            // server 送來請求:2026-07-28 的 stdio 禁止(改用 MRTR),舊版的 server 才會這樣做(sampling 之類)。
+            // 回「不支援」,讓對方不必一直等。不把對方的 method 放進訊息:不回顯不可信的內容。
             Ok(Incoming::Request { id, .. }) => {
                 let reply = jsonrpc::error_response(
                     &id,

@@ -61,24 +61,44 @@ crates/agent/src/tools/mcp.rs   McpTool:實作 ErasedTool(驗證參數、轉換�
   沒有 `id` 的回應(不知道回哪個請求)、`params` 不是物件或陣列、請求帶 `result` / `error`、`error` 物件缺 `code` 或 `message`。
   規格之外的頂層欄位略過(往後相容)。
 
-**MCP 的流程**:
+**MCP 的流程**(第 3 步改寫:規格 2026-07-28 是無狀態的,D-052):
+
+> 原本照記憶寫的是 `initialize` → `notifications/initialized` 的握手。實作前照下一條的要求讀了規格,
+> 發現 2026-07-28(2026-07-28 發布,當時最新)拿掉了握手與 session:每個請求自己帶版本,server 不記得前一個請求。
 
 ```
-client ── initialize(protocolVersion、capabilities、clientInfo)──→ server
-client ←── result(protocolVersion、capabilities、serverInfo)──── server
-client ── notifications/initialized ──→ server
-client ── tools/list(cursor)──→ …直到沒有 nextCursor
-client ── tools/call(name、arguments)──→ result(content[]、isError)
+client ── server/discover ──────────────→ result(supportedVersions、capabilities、instructions、_meta.serverInfo)
+client ── tools/list(cursor)───────────→ …直到沒有 nextCursor
+client ── tools/call(name、arguments)──→ result(content[]、isError、structuredContent)
+         每個請求的 params._meta:protocolVersion = "2026-07-28"、clientCapabilities = {}、clientInfo
 ```
 
-- 協定版本:client 送它支援的版本,server 回它要用的版本;不是 client 支援的就關掉連線、報錯(§9-2)。
-  實作時先讀當時的規格確認版本字串,不憑記憶。
-- server 的 capabilities 沒有 `tools`:這個 server 沒有工具可用,啟動時報錯。
-- `tools/list` 的結果在啟動時讀一次;`notifications/tools/list_changed` 略過(白名單本來就固定,不跟著 server 變)。
+- 協定版本:只支援 2026-07-28(§9-2)。`server/discover` 的 `supportedVersions` 沒有它、或任何請求回 `-32022`
+  (`UnsupportedProtocolVersion`,`data.supported` 列出對方支援的)→ 拒絕。
+- `server/discover` 是規格建議 stdio 的 client 先送的探測:回了不是 2026-07-28 定義的錯誤(`-32020`~`-32022` 以外)、
+  或一直不回,就是舊版(要 `initialize`)的 server → 拒絕,不接著送 `tools/call`(有些舊版 server 會用舊的語意處理)。
+- server 的 capabilities 沒有 `tools`(要是物件):這個 server 沒有工具可用,啟動時報錯。
+- `tools/list` 的結果在啟動時讀一次;`notifications/tools/list_changed` 在新版只會從 `subscriptions/listen` 來,我們不訂閱
+  (白名單本來就固定,不跟著 server 變)。
+
+**實作時定下的(第 3 步,`client.rs`)**:
+
+- 不宣告任何 client 能力(`clientCapabilities: {}`):規格規定 server 不能要求沒宣告的能力,所以不會收到 sampling 之類的要求。
+- 結果的 `resultType`:沒有就當 `complete`(舊版格式);`input_required`(MRTR,server 要求更多輸入)回 `InputRequired`;
+  其他值一律不合法(規格要求)。
+- `tools/list`:最多 100 頁、1000 個工具;同一個 cursor 出現第二次就停(不然會繞圈)。格式不對的工具個別拒絕、列在
+  `ToolList::rejected`,不讓整份清單失效;名稱重複時保留第一個。工具名稱照規格的「SHOULD」收緊成必須:1~128 個 ASCII 英數字、`_`、`-`、`.`。
+  `inputSchema` 要是物件且 `type` 是 `"object"`;`title`、`description` 不是字串就當作沒有。
+- 每個請求有逾時(預設 30 秒);逾時的請求由傳輸送出 `notifications/cancelled`(規格要求),連線照常。
+  取消是在請求的 future 被丟掉時(`Drop`)送出,不管是誰丟的。
+- 錯誤訊息裡會出現 server 給的字串(版本、被拒絕的工具名稱):只留可印的字元、限制長度與個數。
+- 連線失敗(版本、舊版 server、沒有工具)時先關閉傳輸再回傳錯誤,子行程才會結束。
 
 **工具結果**(`tools/call` 的 `content`):
 
-- `text` 依序接起來;`image`、`audio`、`resource` 換成一行說明(例如 `[image/png omitted]`,§9-5)。
+- `text` 依序接起來(一段一行);`image`、`audio` 換成一行說明(例如 `[image/png omitted]`,§9-5;`mimeType` 不像 media type 時
+  只寫 `[image omitted]`),`resource_link`、`resource` 是 `[resource_link omitted]`、`[resource omitted]`,不認得的是
+  `[unsupported content omitted]`。一段文字都沒有時,接上 `structuredContent` 的 JSON。
 - `isError: true` → `ToolError::Failed`(跟內建工具一樣交回模型);JSON-RPC 的錯誤也是 `Failed`。
 - 大小上限交給 agent 既有的截斷(32 KiB);傳輸層另有一則訊息的上限(§5)。
 
@@ -126,7 +146,8 @@ trait Transport: Send + Sync {
 
 - `POST` JSON-RPC 到設定的 URL,`Accept: application/json, text/event-stream`;回應可能是一份 JSON,也可能是 SSE 串流
   (重用 llm 的 `SseParser`,在串流裡找到對應 `id` 的回應)。
-- `initialize` 的回應帶 `Mcp-Session-Id` 就記下來,之後每個請求都帶;也帶 `MCP-Protocol-Version`。結束時 `DELETE` 結束 session。
+- ~~`initialize` 的回應帶 `Mcp-Session-Id` 就記下來,之後每個請求都帶;結束時 `DELETE` 結束 session。~~
+  2026-07-28 沒有 session 了(D-052);每個請求帶 `MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name` 三個 header(第 4 步照規格確認)。
 - URL 只收 https(localhost 例外,同 `config_loader::check_api_base_url`);**不跟隨 redirect**(token 不能被帶到別的主機)。
 - 認證:可選的 bearer token,從設定檔指定的環境變數讀(`token_env`),包成 `SecretString`,不進 log。
 - 不開 GET 的長連線(server 主動推送):只做工具不需要。
@@ -176,7 +197,7 @@ tools = ["lookup"]
 |---|---|---|
 | 1 | `crates/mcp` 骨架、JSON-RPC 訊息型別 **(完成)** | serde 的 `untagged` enum、`#[serde(flatten)]` |
 | 2 | stdio 傳輸 + 測試 server(stdio)**(完成)** | `tokio::process`、背景 task、`oneshot`、`HashMap<id, Sender>`、`kill_on_drop` |
-| 3 | `McpClient`:initialize、版本協商、tools/list 分頁、tools/call | async 的狀態流程、錯誤分類 |
+| 3 | `McpClient`:`server/discover` 探測、每個請求的 `_meta`、tools/list 分頁、tools/call **(完成)** | async 的狀態流程、錯誤分類 |
 | 4 | HTTP 傳輸 + 測試 server(HTTP) | reqwest 不跟 redirect、SSE 串流裡找回應、同一組測試跑兩種傳輸 |
 | 5 | agent 整合:`McpTool`、`[[mcp]]` 設定、白名單、E2E | `jsonschema` 編譯一次重複用、`Box<dyn ErasedTool>` 混著內建與 MCP 工具 |
 | 6 | 對真的參考 server 跑一次(`#[ignore]`)、README、retro | — |
