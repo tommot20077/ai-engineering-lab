@@ -33,6 +33,28 @@ pub struct RawConfig {
     pub paths: PathsSection,
     #[serde(default)]
     pub prices: BTreeMap<String, Price>,
+    /// MCP server(`[[mcp]]`,可以有好幾個;003 第二部分)。
+    #[serde(default)]
+    pub mcp: Vec<McpSection>,
+}
+
+/// 一個 `[[mcp]]`。`command` 與 `url` 恰好一個(stdio 或 HTTP)。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpSection {
+    /// 工具名稱的前綴:模型看到 `<name>__<tool>`。
+    pub name: String,
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// 子行程的環境變數:只有這裡寫的會傳過去(加上 PATH、HOME、LANG,D-050)。
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    pub url: Option<String>,
+    /// bearer token 放在哪個環境變數(秘密不寫進設定檔)。
+    pub token_env: Option<String>,
+    /// 白名單:要提供給模型的工具。必填、不能是空的。
+    pub tools: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -89,6 +111,149 @@ pub struct Settings {
     pub runs_dir: PathBuf,
     pub records_dir: PathBuf,
     pub retry: RetryPolicy,
+    pub mcp: Vec<McpServer>,
+}
+
+/// 檢查過的 `[[mcp]]`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServer {
+    pub name: String,
+    pub transport: McpTransport,
+    pub tools: Vec<String>,
+}
+
+/// 怎麼連到 MCP server。Java 21 的 sealed interface + record:兩種情況各帶自己的欄位,`match` 時 compiler 檢查有沒有漏。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpTransport {
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+    },
+    Http {
+        url: String,
+        token_env: Option<String>,
+    },
+}
+
+/// server 名稱:小寫英數字與 `_`,1~16 個字元(design-part2 §6)。
+fn valid_server_name(name: &str) -> bool {
+    (1..=16).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// 環境變數的名稱:英文字母、數字、`_`,不能以數字開頭。
+fn valid_env_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// 檢查所有 `[[mcp]]`。問題加進 `problems`(一次列出全部);回傳的清單只有在 `problems` 是空的時候才會被使用。
+fn check_mcp(
+    file: &ConfigFile<RawConfig>,
+    sections: &[McpSection],
+    problems: &mut Vec<String>,
+) -> Vec<McpServer> {
+    let env_rule =
+        "must be an environment variable name (A-Z, a-z, 0-9, `_`, not starting with a digit)";
+    let mut servers = Vec::new();
+    for (i, section) in sections.iter().enumerate() {
+        let name = &section.name;
+        let name_ok = valid_server_name(name);
+        if !name_ok {
+            problems.push(format!(
+                "[[mcp]] name `{name}` must be 1-16 lowercase letters, digits or `_`"
+            ));
+        } else if sections.iter().take(i).any(|s| &s.name == name) {
+            problems.push(format!("[[mcp]] name `{name}` is used twice"));
+        }
+        let transport = match (&section.command, &section.url) {
+            (Some(command), None) => {
+                if section.token_env.is_some() {
+                    problems.push(format!(
+                        "[[mcp]] `{name}`: `token_env` only applies to `url`"
+                    ));
+                }
+                for key in section.env.keys().filter(|k| !valid_env_name(k)) {
+                    problems.push(format!("[[mcp]] `{name}`: env `{key}` {env_rule}"));
+                }
+                if command.trim().is_empty() {
+                    problems.push(format!("[[mcp]] `{name}`: `command` must not be empty"));
+                    None
+                } else if command.contains('/') {
+                    // 有 `/` 的是路徑:相對路徑以設定檔所在的目錄為準(同 [paths],D-025);沒有 `/` 的照 PATH 找。
+                    file.resolve(command)
+                        .map_err(|e| problems.push(format!("[[mcp]] `{name}` command: {e}")))
+                        .ok()
+                        .map(|path| path.to_string_lossy().into_owned())
+                } else {
+                    Some(command.clone())
+                }
+                .map(|command| McpTransport::Stdio {
+                    command,
+                    args: section.args.clone(),
+                    env: section.env.clone(),
+                })
+            }
+            (None, Some(url)) => {
+                if !section.args.is_empty() || !section.env.is_empty() {
+                    problems.push(format!(
+                        "[[mcp]] `{name}`: `args` and `env` only apply to `command`"
+                    ));
+                }
+                let url = config_loader::check_api_base_url(&format!("[[mcp]] `{name}` url"), url)
+                    .map_err(|problem| problems.push(problem))
+                    .ok();
+                if let Some(token_env) = section.token_env.as_deref().filter(|t| !valid_env_name(t))
+                {
+                    problems.push(format!(
+                        "[[mcp]] `{name}`: token_env `{token_env}` {env_rule}"
+                    ));
+                }
+                url.map(|url| McpTransport::Http {
+                    url,
+                    token_env: section.token_env.clone(),
+                })
+            }
+            _ => {
+                problems.push(format!(
+                    "[[mcp]] `{name}` needs exactly one of `command` (stdio) or `url` (HTTP)"
+                ));
+                None
+            }
+        };
+        if section.tools.is_empty() {
+            problems.push(format!(
+                "[[mcp]] `{name}`: `tools` must list at least one tool (the allowlist)"
+            ));
+        }
+        for (j, tool) in section.tools.iter().enumerate() {
+            let offered = crate::tools::mcp::tool_name(name, tool);
+            if section.tools.iter().take(j).any(|t| t == tool) {
+                problems.push(format!("[[mcp]] `{name}`: tool `{tool}` is listed twice"));
+            } else if name_ok && !crate::tool::is_valid_name(&offered) {
+                // server 名稱本身不合法時已經報過了,不再每個工具重複一次。
+                problems.push(format!(
+                    "[[mcp]] `{name}`: the tool `{tool}` cannot be offered to the model as `{offered}` \
+                     (names must be 1-64 characters of ASCII letters, digits, `_` or `-`)"
+                ));
+            }
+        }
+        // 有任何問題時整個設定都不會被使用(`from_config` 回 `Err`),這裡不必再過濾有問題的 server。
+        if let Some(transport) = transport {
+            servers.push(McpServer {
+                name: name.clone(),
+                transport,
+                tools: section.tools.clone(),
+            });
+        }
+    }
+    servers
 }
 
 /// 設定有問題。一次列出全部的問題。
@@ -169,6 +334,8 @@ impl Settings {
                 .ok(),
         };
 
+        let mcp = check_mcp(file, &raw.mcp, &mut problems);
+
         // 只有「沒有任何問題」時,這些 Option 才一定都是 Some;寫在同一個 match 裡就不需要 unwrap。
         match (base_url, data_dir, records_dir) {
             (Some(base_url), Some(data_dir), Some(records_dir)) if problems.is_empty() => {
@@ -182,6 +349,7 @@ impl Settings {
                     runs_dir: data_dir.join("runs"),
                     records_dir,
                     retry: RetryPolicy::default(),
+                    mcp,
                 })
             }
             _ => Err(InvalidConfig(problems)),

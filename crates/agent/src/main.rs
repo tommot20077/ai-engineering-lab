@@ -9,13 +9,15 @@
 //! 整個 agent 只有這個檔案讀設定檔、環境變數與 `.env`(D-016)。
 //! 回答印到 stdout,每一步的進度、摘要與警告印到 stderr(可以把回答導到檔案,又看得到過程)。
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use agent::cli::{Cli, Command, RunArgs};
-use agent::config::{self, RawConfig, Settings};
-use agent::tools::{Calculator, CurrentTime, ListDir, ReadFile, Root};
+use agent::config::{self, McpServer, McpTransport, RawConfig, Settings};
+use agent::tools::mcp::CallTool;
+use agent::tools::{Calculator, CurrentTime, ListDir, ReadFile, Root, select_mcp_tools};
 use agent::trajectory::{Event, TrajectoryWriter};
 use agent::{
     Agent, AgentConfig, Clock, DEFAULT_SYSTEM, ErasedTool, Finished, Limit, Outcome, Step, Toolbox,
@@ -28,6 +30,10 @@ use llm::{
     AliasTable, AnthropicClient, AnthropicConfig, DEFAULT_QUEUE_CAPACITY, JsonlWriter, LlmProvider,
     LlmProviderExt, ProviderMetadata, RecordSink,
 };
+use mcp::transport::{
+    HttpConfig, HttpLimits, HttpTransport, StdioConfig, StdioLimits, StdioTransport, Transport,
+};
+use mcp::{ClientOptions, McpClient};
 
 /// 結束碼:0 = 回答了;1 = 執行了但沒有回答(拒答、撞到護欄、失敗);2 = 根本沒開始(設定、參數錯誤)。
 #[tokio::main]
@@ -92,10 +98,12 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
         tools.push(Box::new(ReadFile::new(root.clone())));
         tools.push(Box::new(ListDir::new(root)));
     }
+    let (provider, records) = build_provider(settings, !args.no_record)?;
+    // 所有 MCP server 在第一次呼叫模型之前連好、挑好工具;任何一個失敗就結束(結束碼 2),一毛錢都還沒花(design-part2 §6)。
+    let mcp_clients = connect_mcp(&settings.mcp, &mut tools).await?;
     let toolbox = Arc::new(Toolbox::new(tools)?);
     let tool_names: Vec<String> = toolbox.defs().into_iter().map(|d| d.name).collect();
 
-    let (provider, records) = build_provider(settings, !args.no_record)?;
     let agent = Agent::new(
         provider.as_ref(),
         toolbox,
@@ -152,6 +160,7 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
     if let Some(writer) = records {
         flush_records(writer).await;
     }
+    close_mcp(mcp_clients).await;
 
     print_summary(&finished, cost, &limits, &path);
     Ok(match &finished.outcome {
@@ -197,6 +206,101 @@ fn build_provider(settings: &Settings, record: bool) -> Result<Provider> {
     let writer = Arc::new(writer);
     let sink: Arc<dyn RecordSink> = writer.clone();
     Ok((Arc::new(core.with_record(sink)), Some(writer)))
+}
+
+/// stdio 的 MCP server 從 agent 繼承的環境變數(D-050):找得到其他程式、知道家目錄、語系。其他(API key 之類)一律不給。
+/// 放在 binary:library 不讀環境變數(D-016)。
+const MCP_INHERITED_ENV: [&str; 3] = ["PATH", "HOME", "LANG"];
+
+/// 連上每個 `[[mcp]]`、依白名單挑出工具加進 `tools`。回傳 client,結束時關閉。
+async fn connect_mcp(
+    servers: &[McpServer],
+    tools: &mut Vec<Box<dyn ErasedTool>>,
+) -> Result<Vec<Arc<McpClient>>> {
+    let mut clients = Vec::new();
+    for server in servers {
+        let context = || format!("MCP server `{}`", server.name);
+        let transport: Box<dyn Transport> = match &server.transport {
+            McpTransport::Stdio { command, args, env } => {
+                let mut full_env: BTreeMap<String, String> = MCP_INHERITED_ENV
+                    .iter()
+                    .filter_map(|name| Some(((*name).to_owned(), std::env::var(name).ok()?)))
+                    .collect();
+                // 設定檔寫的蓋過繼承的。
+                full_env.extend(env.clone());
+                let config = StdioConfig {
+                    command: command.clone(),
+                    args: args.clone(),
+                    env: full_env,
+                };
+                Box::new(
+                    StdioTransport::spawn(&config, StdioLimits::default()).with_context(context)?,
+                )
+            }
+            McpTransport::Http { url, token_env } => {
+                let token = token_env
+                    .as_deref()
+                    .map(config_loader::secret_env)
+                    .transpose()
+                    .with_context(context)?;
+                let config = HttpConfig {
+                    url: url.clone(),
+                    token,
+                };
+                Box::new(HttpTransport::new(&config, HttpLimits::default()).with_context(context)?)
+            }
+        };
+        let options = ClientOptions {
+            name: "ai-engineering-lab-agent".into(),
+            ..ClientOptions::default()
+        };
+        let client = McpClient::connect(transport, options)
+            .await
+            .with_context(context)?;
+        let list = match client.list_tools().await {
+            Ok(list) => list,
+            Err(e) => {
+                client.close().await;
+                return Err(anyhow::Error::new(e).context(context()));
+            }
+        };
+        let client = Arc::new(client);
+        let caller: Arc<dyn CallTool> = client.clone();
+        match select_mcp_tools(&server.name, &list, &server.tools, caller) {
+            Ok(selected) => {
+                eprintln!(
+                    "mcp: `{}` offers {} tool(s), using {}",
+                    server.name,
+                    list.tools.len(),
+                    selected.len()
+                );
+                tools.extend(
+                    selected
+                        .into_iter()
+                        .map(|t| Box::new(t) as Box<dyn ErasedTool>),
+                );
+            }
+            Err(problems) => bail!(
+                "MCP tools are not available:{}",
+                problems
+                    .iter()
+                    .map(|p| format!("\n  - {p}"))
+                    .collect::<String>()
+            ),
+        }
+        clients.push(client);
+    }
+    Ok(clients)
+}
+
+/// 關閉每個 MCP 連線(stdio:關 stdin、等 server 結束)。agent 已經丟掉了,client 應該只剩這一份;
+/// 還有人拿著的話就算了,子行程在 drop 時一樣會被收掉(`kill_on_drop`)。
+async fn close_mcp(clients: Vec<Arc<McpClient>>) {
+    for client in clients {
+        if let Ok(client) = Arc::try_unwrap(client) {
+            client.close().await;
+        }
+    }
 }
 
 /// 等背景的紀錄 writer 把佇列寫完。`shutdown` 會阻塞,所以放到 `spawn_blocking`(同 gateway)。

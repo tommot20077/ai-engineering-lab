@@ -218,8 +218,8 @@ impl Toolbox {
     }
 }
 
-/// Anthropic 的規定:`^[a-zA-Z0-9_-]{1,64}$`。規則簡單,不必動用 regex。
-fn is_valid_name(name: &str) -> bool {
+/// Anthropic 的規定:`^[a-zA-Z0-9_-]{1,64}$`。規則簡單,不必動用 regex。設定檔檢查 MCP 工具名稱時也用它。
+pub(crate) fn is_valid_name(name: &str) -> bool {
     (1..=64).contains(&name.len())
         && name
             .chars()

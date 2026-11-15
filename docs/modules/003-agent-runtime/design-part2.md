@@ -199,6 +199,25 @@ tools = ["lookup"]
 - 所有 server 在第一次呼叫模型之前連好;任何一個失敗就結束(結束碼 2),一毛錢都還沒花。
 - eval 這部分不接 MCP(eval 的題目只用內建工具,結果才可重現)。
 
+**實作時定下的(第 5 步,`agent/src/tools/mcp.rs`、`config.rs`、`main.rs`)**:
+
+- `McpTool` 實作 `ErasedTool`;呼叫 server 的那一端抽成 `CallTool` trait(`McpClient` 實作它),單元測試不必啟動 server。
+- schema 用 `jsonschema::draft202012`(沒寫 `$schema` 時當 2020-12,MCP 規格的預設),**`pattern` 改用 `regex` crate**:
+  jsonschema 預設的 fancy-regex 會回溯,server 給的 pattern 可以讓驗證卡住(ReDoS);代價是 lookahead 之類的語法不支援,
+  那種工具啟動時就被拒絕。jsonschema 關掉預設功能:外部的 `$ref`(http、檔案)不會去抓,用到的 schema 編譯失敗。
+- 參數不合法時最多列 3 個問題,錯在欄位上就加上位置(`at /a: "2" is not of type "integer"`)。
+- 說明:控制字元(含換行)換成空白,超過 1024 字元截斷加 `…`;沒有說明時寫「The tool `x` of the MCP server `s`.」
+  (`Toolbox` 不收空的說明;不用 server 給的 `title`,一樣不可信、也沒有比較多資訊)。
+- `[[mcp]]` 的檢查:名稱 1~16 個小寫英數字與 `_`、不能重複;`command` 與 `url` 恰好一個;`args`、`env` 只能配 `command`,
+  `token_env` 只能配 `url`;`env` 的 key 與 `token_env` 要是合法的環境變數名稱;`url` 照 `check_api_base_url`(https,本機例外);
+  白名單必填、不能重複,而且 `<server>__<tool>` 必須符合 Anthropic 的名稱規則(在設定檔就擋下,不必等連上 server)。
+  `command` 有 `/` 是路徑(相對路徑以設定檔所在的目錄為準),沒有 `/` 照 PATH 找;`args`、`env` 原樣傳遞,不展開 `~`。
+- `PATH`、`HOME`、`LANG` 由 `main.rs` 從自己的環境讀出來放進 stdio 的 `env`(library 不讀環境變數,D-016)。
+- 連線順序:API key(provider)→ 每個 MCP server(discover、tools/list、白名單)→ `Toolbox` → 第一次呼叫模型。
+  白名單裡的問題一次列出全部;結束時依序關閉每個 client。
+- E2E(`tests/e2e_mcp.rs`)的測試 server 屬於 `mcp` crate,`CARGO_BIN_EXE_*` 拿不到:從 agent 執行檔旁邊找
+  (`cargo test --workspace` 會一起編好),找不到就先 `cargo build -p mcp --bin mcp-test-server`。
+
 ## 7. 測試(D-051)
 
 - `mcp-test-server`:一個小的 Rust binary,`--stdio` 或 `--http <port>`;工具有 `echo`、`add`、`slow`(睡一下)、
@@ -217,7 +236,7 @@ tools = ["lookup"]
 | 2 | stdio 傳輸 + 測試 server(stdio)**(完成)** | `tokio::process`、背景 task、`oneshot`、`HashMap<id, Sender>`、`kill_on_drop` |
 | 3 | `McpClient`:`server/discover` 探測、每個請求的 `_meta`、tools/list 分頁、tools/call **(完成)** | async 的狀態流程、錯誤分類 |
 | 4 | HTTP 傳輸 + 測試 server(HTTP)**(完成)** | reqwest 不跟 redirect、SSE 串流裡找回應、同一組測試跑兩種傳輸 |
-| 5 | agent 整合:`McpTool`、`[[mcp]]` 設定、白名單、E2E | `jsonschema` 編譯一次重複用、`Box<dyn ErasedTool>` 混著內建與 MCP 工具 |
+| 5 | agent 整合:`McpTool`、`[[mcp]]` 設定、白名單、E2E **(完成)** | `jsonschema` 編譯一次重複用、`Box<dyn ErasedTool>` 混著內建與 MCP 工具 |
 | 6 | 對真的參考 server 跑一次(`#[ignore]`)、README、retro | — |
 
 ## 9. 已決定的小事(2026-11-14,使用者逐一確認,都照建議)

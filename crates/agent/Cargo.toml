@@ -19,6 +19,10 @@ thiserror.workspace = true
 schemars.workspace = true
 # `BoxFuture`:抹除型別的工具要能放進 `Vec<Box<dyn ErasedTool>>`(同 llm 的 `LlmProvider`)。
 futures.workspace = true
+# MCP client(003 第二部分):`McpTool` 把 MCP server 的工具接到 `ErasedTool`。
+mcp = { path = "../mcp" }
+# MCP 工具的參數驗證(D-049)。
+jsonschema.workspace = true
 # `current_time` 的時間與時區;跟 llm、eval 用同一套。
 jiff.workspace = true
 # 每次執行的 id(UUID v7,開頭是時間)。

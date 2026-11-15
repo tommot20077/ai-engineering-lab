@@ -75,6 +75,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # 從 Rust 型別產生 JSON Schema(003 agent:工具參數的 schema 跟解析用同一個 struct,D-043)。
 # 會讀 serde 的屬性(`deny_unknown_fields`、`default`),欄位的 `///` 文件變成 schema 的 description。
 schemars = "1"
+# 驗證 MCP 工具的參數(003 第二部分,D-049):schema 是 server 給的,啟動時編譯一次、每次呼叫重複用。
+# 不開預設功能:預設會照 `$ref` 去抓 http 與本機檔案,規格(basic §JSON Schema)要求預設不能抓外部參照。
+jsonschema = { version = "0.61", default-features = false }
 
 # 只在測試用的依賴。
 proptest = "1"

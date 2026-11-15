@@ -42,3 +42,23 @@ max_tokens = 4096
 # [prices."claude-sonnet-5-5"]
 # input = 2.0
 # output = 10.0
+
+# MCP server(可以有好幾個 [[mcp]]):把別人寫好的工具接給 agent。模型看到的工具名稱是 `<name>__<工具>`。
+# 只提供 `tools` 白名單裡的工具;白名單裡的工具 server 沒有提供,或任何一個 server 連不上,agent 就不開始(結束碼 2)。
+# 協定版本只支援 2026-07-28(舊版、要 `initialize` 的 server 會被拒絕)。
+#
+# stdio:agent 啟動子行程。子行程只拿到 PATH、HOME、LANG 與這裡的 `env`(API key 不會傳過去)。
+# `command` 有 `/` 的話是路徑(相對路徑以這個設定檔所在的目錄為準),沒有就照 PATH 找。`args`、`env` 原樣傳遞(不展開 `~`)。
+# [[mcp]]
+# name = "notes"                       # 小寫英數字與 `_`,1~16 個字元
+# command = "notes-mcp"
+# args = ["--root", "/Users/me/notes"]
+# env = { NOTES_DIR = "/Users/me/notes" }
+# tools = ["search", "read"]            # 白名單,必填
+#
+# Streamable HTTP:只收 https(localhost 可以用 http);不跟隨 redirect。token 放環境變數,這裡只寫變數名稱。
+# [[mcp]]
+# name = "remote"
+# url = "https://example.com/mcp"
+# token_env = "REMOTE_MCP_SECRET"
+# tools = ["lookup"]

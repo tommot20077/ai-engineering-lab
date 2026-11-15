@@ -4,7 +4,8 @@
 //!     mcp-test-server --http <port> [旗標…] [--token T] [--sse] [--sse-request] [--sse-truncate] [--redirect]
 //!                                           [--text-response]
 //!
-//! 共用的旗標:`--versions V1,V2`、`--legacy`、`--no-tools`、`--silent-discover`、`--bad-tools`、`--loop-cursor`。
+//! 共用的旗標:`--versions V1,V2`、`--legacy`、`--no-tools`、`--silent-discover`、`--bad-tools`、`--loop-cursor`、
+//! `--env-tool`。
 //! HTTP 模式綁 127.0.0.1;port 給 0 由系統挑,實際的 URL 印在 stdout 的第一行(測試讀它)。
 //!
 //! 整合測試用 `env!("CARGO_BIN_EXE_mcp-test-server")` 找到它。CI 不必裝 Node 或 Python,而且可以照劇本故意出錯
@@ -31,7 +32,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Stdout};
 use tokio::sync::oneshot;
 
 const USAGE: &str = "usage: mcp-test-server (--stdio | --http PORT) [--versions V1,V2] [--legacy] \
-                     [--no-tools] [--silent-discover] [--bad-tools] [--loop-cursor] \
+                     [--no-tools] [--silent-discover] [--bad-tools] [--loop-cursor] [--env-tool] \
                      [--token T] [--sse] [--sse-request] [--sse-truncate] [--redirect] [--text-response]";
 
 #[tokio::main(flavor = "current_thread")]
@@ -67,6 +68,8 @@ struct Flags {
     bad_tools: bool,
     /// `nextCursor` 永遠是同一個:不設上限的 client 會一直翻頁。
     loop_cursor: bool,
+    /// 多一個 `env` 工具:回傳自己看得到的環境變數名稱(agent 的 E2E 確認 API key 沒有傳給子行程)。
+    env_tool: bool,
     // ---- 只有 HTTP 模式用 ----
     /// 要求 `Authorization: Bearer <token>`。
     token: Option<String>,
@@ -107,6 +110,7 @@ fn parse_args(args: &[String]) -> Option<(Mode, Flags)> {
             "--silent-discover" => flags.silent_discover = true,
             "--bad-tools" => flags.bad_tools = true,
             "--loop-cursor" => flags.loop_cursor = true,
+            "--env-tool" => flags.env_tool = true,
             _ => return None,
         }
     }
@@ -340,7 +344,7 @@ impl Server {
 
     fn list_tools(&self, params: &Value) -> Reply {
         const PAGE: usize = 4;
-        let tools = tool_definitions(self.flags.bad_tools);
+        let tools = tool_definitions(&self.flags);
         let page = match field(params, "cursor") {
             Value::Null => 0,
             Value::String(cursor) => match cursor.strip_prefix("page-").map(str::parse::<usize>) {
@@ -409,6 +413,14 @@ impl Server {
             "mystery" => json!({"resultType": "mystery", "content": []}),
             // 舊版 server 的結果沒有 `resultType`:要當成 complete。
             "plain" => json!({"content": [{"type": "text", "text": "no resultType"}]}),
+            // 只回名稱(值可能是秘密),依字母排序、逗號分隔。
+            "env" if self.flags.env_tool => {
+                let mut names: Vec<String> = std::env::vars_os()
+                    .map(|(name, _)| name.to_string_lossy().into_owned())
+                    .collect();
+                names.sort();
+                text(names.join(","))
+            }
             // HTTP 模式下,client 要把 `region` 複製到 `Mcp-Param-Region`(由 HTTP handler 檢查)。
             "region" => text(format!(
                 "region={}",
@@ -421,7 +433,7 @@ impl Server {
 }
 
 /// 工具清單。每個都有 `inputSchema`(根的 `type` 是 `object`)。
-fn tool_definitions(bad: bool) -> Vec<Value> {
+fn tool_definitions(flags: &Flags) -> Vec<Value> {
     let no_args = json!({"type": "object", "additionalProperties": false});
     let mut tools = vec![
         json!({"name": "echo", "title": "Echo", "description": "Returns the text it is given.",
@@ -445,7 +457,10 @@ fn tool_definitions(bad: bool) -> Vec<Value> {
                    "region": {"type": "string", "x-mcp-header": "Region"}, "query": {"type": "string"}
                }, "required": ["region"]}}),
     ];
-    if bad {
+    if flags.env_tool {
+        tools.push(json!({"name": "env", "description": "Lists the names of its environment variables.", "inputSchema": no_args}));
+    }
+    if flags.bad_tools {
         tools.extend([
             json!({"name": 5, "inputSchema": no_args}),
             json!({"name": "no_schema"}),
