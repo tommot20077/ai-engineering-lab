@@ -14,6 +14,10 @@ allow = [
     "ISC",
     # 寬鬆的「資料」授權:webpki-root-certs 打包的 Mozilla 根憑證清單用這個(reqwest → rustls)。
     "CDLA-Permissive-2.0",
+    # MIT 去掉「要保留版權聲明」那一條,比 MIT 更寬鬆:borrow-or-share(jsonschema → referencing → fluent-uri,003 第二部分)。
+    "MIT-0",
+    # OSI 認可的寬鬆授權(只要求不冒充原作者、改過要註明):foldhash 0.2(hashbrown 0.17 → indexmap,加 jsonschema 時升版)。
+    "Zlib",
 ]
 
 [bans]
