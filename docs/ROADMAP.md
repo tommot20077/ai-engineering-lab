@@ -69,7 +69,9 @@
   設計照 §9-2「只支援最新的一版」改寫,細節在 design-part2 §4。
 - **live 測試還沒跑**:`crates/mcp/tests/live.rs`(對官方參考 server)寫好了,但雲端環境不允許執行從 npm 下載的程式;
   要在自己的機器上跑 `cargo test -p mcp --test live -- --ignored`(見待辦)。
-- **下一步**:003 第三部分(沙箱):先寫 `design-part3.md`;設計分岔由 Claude 先選建議方案並標明(使用者 2026-11-15 交代)。
+- **003 第三部分(沙箱)**:草案 `docs/modules/003-agent-runtime/design-part3.md`(2026-11-15)。七個分岔由 Claude 先選建議方案、
+  標「待確認」(使用者交代);**實作還沒開始**:雲端開發環境不允許執行容器(`docker run` 被權限系統擋下),見草案 §7。
+- **下一步**:使用者看過第二部分的成果、確認或推翻第三部分草案的分岔,並決定開發環境(草案 §7 的 a / b / c)。
 - **使用者交代(2026-11-15)**:003 全部做完再一起看;第三部分的設計分岔由 Claude 先選建議方案、在文件裡標明,使用者看的時候可以推翻。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
