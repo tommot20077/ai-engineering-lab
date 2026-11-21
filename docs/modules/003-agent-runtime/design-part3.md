@@ -145,6 +145,20 @@ dockerd 不會自己常駐:每個雲端 session 要先在背景啟動(`dockerd`)
 - 測不到、只寫在註解的防線(mutation 檢查時確認是等價):最後一段的 `FollowSymlinks::No`(前面的 `symlink_metadata` 已經擋了,
   只差在檢查與開檔之間被換掉的競爭)、暫存檔的 `create_new`、`sync_all`、失敗時刪暫存檔。
 
+## 7.4 實作筆記(第 4 步,2026-11-21)
+
+- **怎麼存檔**:在核准提示回答 `s`。結束碼 3(0 回答了、1 沒回答、2 沒開始之外的新狀態)。
+- **兩層**:library 的 `Suspended`(agent loop 的狀態:對話、計數、已用時間、暫停的那一輪,`version: 1`、`deny_unknown_fields`);
+  CLI 的 `SavedRun` = `RunPlan`(重建 agent 用的選項:模型別名、system prompt 的**內容**、`--root` 的絕對路徑、`--allow-write`、record)+ 軌跡路徑 + `Suspended`。
+- **`Agent::resume` 比對**模型、system prompt、`max_tokens`、護欄、工具定義;任何一個不同就拒絕。
+- **等核准的清單接續時重新算**,不信存檔裡的(存檔裡的只是紀錄)。`AutoApprove` 時清單是空的,接著直接執行。
+- **順序**:讀存檔 → 重建 agent、`resume` 檢查 → 打開軌跡 → **認領**(刪掉存檔)→ 才開始執行。檢查失敗時存檔還在;
+  兩個行程同時接續,只有一個刪得掉存檔。
+- **時間**:`used_ms` 存進檔案,接續時接著算(等待的時間不算)。
+- **CI 上的逾時**(第 2 步的 Mutants (diff) 有 5 個、這一步手寫的 mutation 有 2 個):讓 `resolve` 什麼都不做的 mutant 會讓
+  「拉到結束」的迴圈永遠停在等核准;`next()` 不會讓出執行緒,tokio 的逾時插不進來,只能等 cargo-mutants 的 300 秒。
+  修法:測試用數步數的 `drain()`;`Agent::run` 問完還有人在等就停(產品端也不會空轉)。
+
 ## 8. 不做
 
 - 通用 shell、網路存取、多檔專案(`cargo` + 外部 crate)、`runs`(執行比對輸出)。

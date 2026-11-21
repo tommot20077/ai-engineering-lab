@@ -74,7 +74,8 @@
   - 第 1 步完成:`crates/sandbox`(`Sandbox` trait、`ContainerSandbox`、假 docker 的流程測試、對真容器的 14 個逃逸測試;CI 設 `SANDBOX_DOCKER=1`)。
   - 第 2 步完成:核准的狀態機(`RunEvent::NeedsApproval`、`resolve`、`ApprovalPolicy`、工具的 `needs_approval` / `describe`;等待時間不算)。
   - 第 3 步完成:`Root` 改用 cap-std(不跟隨任何 symlink)、`write_file`、`edit_file`、`--allow-write`、核准提示、`--yes`、軌跡記下核准。
-- **下一步**:003 第三部分第 4 步:暫停的狀態存檔、`agent resume <run-id>` 接續。
+  - 第 4 步完成:核准提示回答 `s` 存檔(結束碼 3)、`agent resume <run id>` 接續(設定或工具變了就拒絕、清單重新算、先認領再執行)。
+- **下一步**:003 第三部分第 5 步:`run_rust` 工具與 `--allow-run`(沙箱 trait object 交給工具)。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理

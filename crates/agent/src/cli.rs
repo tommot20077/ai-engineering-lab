@@ -2,11 +2,13 @@
 //!
 //! ```text
 //! agent run "問題" [--model default] [--root <目錄>] [--allow-write] [--yes] [--system <檔案>] [--max-turns 10] [--no-record]
+//! agent resume <run id> [--yes]
 //! ```
 
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
+use uuid::Uuid;
 
 /// 設定檔的預設位置(目前目錄)。
 pub const DEFAULT_CONFIG: &str = "agent.toml";
@@ -27,6 +29,19 @@ pub struct Cli {
 pub enum Command {
     /// Answer one task, calling tools as needed; print the answer.
     Run(RunArgs),
+    /// Continue a run that was saved while waiting for approval (answer `s` at the prompt).
+    Resume(ResumeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ResumeArgs {
+    /// The run id printed when the run was saved.
+    // 型別是 `Uuid`:clap 用它的 `FromStr` 解析,不是 UUID 的字串在這裡就被拒絕,組不出 `../` 之類的檔名。
+    pub run_id: Uuid,
+
+    /// Approve the pending tool calls (and any later ones) without asking.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -64,9 +79,22 @@ pub struct RunArgs {
     pub no_record: bool,
 }
 
-/// 核准提示的回答:`y` / `yes`(不分大小寫、前後空白不算)才是核准,其他一律拒絕(包括空白行與讀不到)。
-pub fn approves(answer: &str) -> bool {
-    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+/// 核准提示的回答。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    Approve,
+    Deny,
+    /// 存檔、結束;之後 `agent resume <run id>` 接著問。
+    Save,
+}
+
+/// 解析一行回答(不分大小寫、前後空白不算):`y` / `yes` 核准、`s` / `save` 存檔,其他一律拒絕(包括空白行)。
+pub fn answer(line: &str) -> Answer {
+    match line.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => Answer::Approve,
+        "s" | "save" => Answer::Save,
+        _ => Answer::Deny,
+    }
 }
 
 /// 把模型給的文字印到終端機之前先整理:控制字元(ESC 開頭的控制序列可以清畫面、改標題、偽造輸出)
@@ -99,7 +127,9 @@ mod tests {
     fn a_task_is_all_that_is_required() {
         let cli = parse(&["run", "幾點了?"]).unwrap();
         assert_eq!(cli.config, PathBuf::from("agent.toml"));
-        let Command::Run(args) = cli.command;
+        let Command::Run(args) = cli.command else {
+            panic!("expected run")
+        };
         assert_eq!(args.task, "幾點了?");
         assert_eq!(args.model, None);
         assert_eq!(args.root, None);
@@ -129,7 +159,9 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(cli.config, PathBuf::from("x.toml"));
-        let Command::Run(args) = cli.command;
+        let Command::Run(args) = cli.command else {
+            panic!("expected run")
+        };
         assert_eq!(args.model.as_deref(), Some("cheap"));
         assert_eq!(args.root, Some(PathBuf::from("notes")));
         assert_eq!(args.system, Some(PathBuf::from("prompt.md")));
@@ -150,13 +182,31 @@ mod tests {
     }
 
     #[test]
-    fn only_yes_approves() {
-        for answer in ["y", "Y", "yes", " YES \n", "y\r\n"] {
-            assert!(approves(answer), "{answer:?}");
+    fn only_yes_approves_and_only_s_saves() {
+        for line in ["y", "Y", "yes", " YES \n", "y\r\n"] {
+            assert_eq!(answer(line), Answer::Approve, "{line:?}");
         }
-        for answer in ["", "\n", "n", "no", "yess", "y y", "ok", "是"] {
-            assert!(!approves(answer), "{answer:?}");
+        for line in ["s", "S\n", "save", " Save "] {
+            assert_eq!(answer(line), Answer::Save, "{line:?}");
         }
+        for line in ["", "\n", "n", "no", "yess", "y y", "ok", "是", "saved"] {
+            assert_eq!(answer(line), Answer::Deny, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn resume_takes_a_run_id() {
+        let cli = parse(&["resume", "01a1fda1-0114-7620-9590-fce50786e53a", "--yes"]).unwrap();
+        let Command::Resume(args) = cli.command else {
+            panic!("expected resume")
+        };
+        assert_eq!(
+            args.run_id.to_string(),
+            "01a1fda1-0114-7620-9590-fce50786e53a"
+        );
+        assert!(args.yes);
+        assert!(parse(&["resume", "../../etc/passwd"]).is_err());
+        assert!(parse(&["resume"]).is_err());
     }
 
     #[test]

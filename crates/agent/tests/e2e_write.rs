@@ -132,12 +132,12 @@ impl Lab {
 
     fn trajectory(&self) -> Vec<Value> {
         let runs = self.dir.path().join("data/runs");
+        // `runs/` 裡還有存檔的子目錄 `suspended/`:只找軌跡檔。
         let file = std::fs::read_dir(runs)
             .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .unwrap();
         std::fs::read_to_string(file)
             .unwrap()
             .lines()
@@ -174,7 +174,7 @@ async fn an_approved_write_happens_and_is_recorded() {
     assert!(out.status.success(), "{stdout}\n{stderr}");
     // 核准提示:具體要做什麼。
     assert!(
-        stderr.contains("── approval needed: write_file (toolu_1)\noverwrite todo.md (12 bytes -> 9 bytes)\n  - 買蛋\nallow? [y/N] "),
+        stderr.contains("── approval needed: write_file (toolu_1)\noverwrite todo.md (12 bytes -> 9 bytes)\n  - 買蛋\nallow? [y/N, s = save and stop] "),
         "{stderr}"
     );
     assert_eq!(stdout, "result: overwrote todo.md (9 bytes)\n");
@@ -235,7 +235,9 @@ async fn edit_file_shows_the_change_and_applies_it() {
     let (stdout, stderr) = text(&out);
     assert!(out.status.success(), "{stderr}");
     assert!(
-        stderr.contains("edit todo.md at line 1\n- 買牛奶\n+ 買豆漿\nallow? [y/N] "),
+        stderr.contains(
+            "edit todo.md at line 1\n- 買牛奶\n+ 買豆漿\nallow? [y/N, s = save and stop] "
+        ),
         "{stderr}"
     );
     assert_eq!(stdout, "result: edited todo.md at line 1\n");
@@ -280,4 +282,135 @@ async fn control_characters_from_the_model_do_not_reach_the_terminal() {
     assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
     assert!(stderr.contains("  ok?[2J\n"), "{stderr}");
     assert_eq!(lab.todo(), "ok\u{1b}[2J\n");
+}
+
+// ---- 存檔與接續(第 4 步)----
+
+/// 從 stderr 找出 `continue with: agent resume <run id>` 的 run id。
+fn saved_run_id(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("continue with: agent resume "))
+        .unwrap_or_else(|| panic!("no resume hint in: {stderr}"))
+        .to_string()
+}
+
+#[tokio::test]
+async fn s_saves_the_run_and_resume_continues_it_later() {
+    let lab = Lab::start("write_file", write_args()).await;
+    let out = lab.agent(&WRITE, "s\n").await;
+    let (stdout, stderr) = text(&out);
+    // 存檔:結束碼 3、沒有回答、檔案沒動。
+    assert_eq!(out.status.code(), Some(3), "{stderr}");
+    assert_eq!(stdout, "");
+    assert_eq!(lab.todo(), "- 買牛奶\n");
+    let id = saved_run_id(&stderr);
+    let file = lab
+        .dir
+        .path()
+        .join(format!("data/runs/suspended/{id}.json"));
+    assert!(
+        stderr.contains(&format!(
+            "saved while waiting for approval: {}",
+            file.display()
+        )),
+        "{stderr}"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let types: Vec<String> = lab
+        .trajectory()
+        .iter()
+        .map(|e| e["type"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(types, ["start", "suspend"]);
+
+    // 之後(另一個行程)接續:再問一次、核准、執行、回答。
+    let out = lab.agent(&["resume", &id], "y\n").await;
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains(&format!("resuming run {id}")), "{stderr}");
+    assert!(
+        stderr.contains("overwrite todo.md (12 bytes -> 9 bytes)"),
+        "{stderr}"
+    );
+    assert_eq!(stdout, "result: overwrote todo.md (9 bytes)\n");
+    assert_eq!(lab.todo(), "- 買蛋\n");
+    // 存檔用掉了;同一個軌跡檔接著寫。
+    assert!(!file.exists());
+    let events = lab.trajectory();
+    let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+    assert_eq!(
+        types,
+        [
+            "start", "suspend", "resume", "approval", "step", "step", "finish"
+        ]
+    );
+    assert_eq!(events[4]["step"]["turn"], 1);
+    assert_eq!(events[5]["step"]["turn"], 2);
+
+    // 不能再接續一次。
+    let out = lab.agent(&["resume", &id], "y\n").await;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        text(&out)
+            .1
+            .contains(&format!("there is no paused run {id}")),
+        "{:?}",
+        text(&out)
+    );
+}
+
+#[tokio::test]
+async fn resume_with_yes_does_not_ask() {
+    let lab = Lab::start("write_file", write_args()).await;
+    let out = lab.agent(&WRITE, "s\n").await;
+    let id = saved_run_id(&text(&out).1);
+    let out = lab.agent(&["resume", &id, "--yes"], "").await;
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stderr}");
+    assert!(!stderr.contains("approval needed"), "{stderr}");
+    assert_eq!(stdout, "result: overwrote todo.md (9 bytes)\n");
+}
+
+#[tokio::test]
+async fn resume_is_refused_when_the_setup_changed_and_the_save_is_kept() {
+    let lab = Lab::start("write_file", write_args()).await;
+    let out = lab.agent(&WRITE, "s\n").await;
+    let id = saved_run_id(&text(&out).1);
+    // 改了設定:每一輪的 token 上限不一樣了。
+    let config = lab.dir.path().join("agent.toml");
+    let changed = std::fs::read_to_string(&config).unwrap() + "[agent]\nmax_tokens = 1234\n";
+    std::fs::write(&config, changed).unwrap();
+    let out = lab.agent(&["resume", &id], "y\n").await;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        text(&out)
+            .1
+            .contains("cannot resume the run: the max_tokens changed since the run was paused"),
+        "{:?}",
+        text(&out)
+    );
+    assert_eq!(lab.todo(), "- 買牛奶\n");
+    // 存檔還在:把設定改回來就能接續。
+    assert!(
+        lab.dir
+            .path()
+            .join(format!("data/runs/suspended/{id}.json"))
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn resume_only_takes_a_run_id() {
+    let lab = Lab::start("write_file", write_args()).await;
+    let out = lab.agent(&["resume", "../../etc/passwd"], "").await;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(text(&out).1.contains("invalid value"), "{:?}", text(&out));
 }

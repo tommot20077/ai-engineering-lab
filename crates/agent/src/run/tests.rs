@@ -281,6 +281,17 @@ async fn next_step(run: &mut Run<'_>) -> Option<Step> {
     }
 }
 
+/// 拉到結束。最多 50 步:錯的實作可能永遠停在「等核准」,`next()` 又不會讓出執行緒(tokio 的逾時插不進來),
+/// 這裡數步數,讓測試失敗而不是卡住(Mutants 在 CI 上就是卡到 300 秒逾時)。
+async fn drain(run: &mut Run<'_>) {
+    for _ in 0..50 {
+        if run.next().await.is_none() {
+            return;
+        }
+    }
+    panic!("the run did not finish within 50 events");
+}
+
 fn failed(failure: AgentFailure) -> Outcome {
     Outcome::Failed { failure }
 }
@@ -1031,7 +1042,7 @@ async fn a_denied_call_is_not_run_and_the_model_is_told() {
         }]
     );
     assert!(g.done.lock().unwrap().is_empty());
-    while run.next().await.is_some() {}
+    drain(&mut run).await;
     assert_eq!(
         provider.requests()[1].messages[2].content,
         [Content::ToolResult {
@@ -1166,7 +1177,7 @@ async fn time_spent_waiting_for_approval_does_not_count_toward_the_deadline() {
     // 人去喝了一小時咖啡。
     tokio::time::sleep(Duration::from_secs(3600)).await;
     run.resolve(vec![("a".into(), Decision::Approve)]).unwrap();
-    while run.next().await.is_some() {}
+    drain(&mut run).await;
     // 真的在跑的時間是 4 + 4 = 8 秒,在 10 秒以內。
     assert_eq!(
         run.finish().outcome,
@@ -1189,7 +1200,7 @@ async fn time_before_the_pause_still_counts_toward_the_deadline() {
     tokio::time::sleep(Duration::from_secs(3600)).await;
     run.resolve(vec![("a".into(), Decision::Approve)]).unwrap();
     let resumed = Instant::now();
-    while run.next().await.is_some() {}
+    drain(&mut run).await;
     // 暫停前用了 6 秒,只剩 4 秒:第二次呼叫在接續後第 4 秒被取消。
     assert_eq!(run.finish().outcome, limit(Limit::Deadline));
     assert_eq!(resumed.elapsed(), Duration::from_secs(4));
@@ -1230,6 +1241,16 @@ async fn oversized_arguments_are_refused_without_asking() {
 }
 
 #[tokio::test]
+async fn arguments_exactly_at_the_limit_are_still_asked_about() {
+    let args = r#"{"target":"x"}"#;
+    let provider = Scripted::new(vec![Reply::Now(tool_reply(&[("a", "danger", args)]))]);
+    let (mut agent, _) = guarded(&*provider, ApprovalPolicy::Ask);
+    agent.config.limits.max_args_bytes = args.len();
+    let mut run = agent.start("?");
+    assert!(matches!(run.next().await, Some(RunEvent::NeedsApproval(_))));
+}
+
+#[tokio::test]
 async fn the_tool_call_limit_is_checked_before_asking() {
     let provider = Scripted::new(vec![Reply::Now(reply_with(&[
         danger("a", "x"),
@@ -1259,6 +1280,233 @@ async fn the_description_shown_for_invalid_arguments_includes_them() {
         pending[0].description,
         "invalid arguments: unknown field `path`, expected `target`\narguments: {\"path\":\"x\"}"
     );
+}
+
+// ---- 存檔與接續(第 4 步,D-057)----
+
+/// 一個停在等核准的執行,存檔出來。
+async fn paused(provider: &dyn LlmProvider) -> Suspended {
+    let (agent, _) = guarded(provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("記下來");
+    assert!(matches!(run.next().await, Some(RunEvent::NeedsApproval(_))));
+    run.suspend().unwrap()
+}
+
+#[tokio::test]
+async fn a_waiting_run_can_be_suspended_and_then_it_is_over() {
+    let provider = Scripted::new(vec![Reply::Now(reply_with(&[danger("a", "x")]))]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("記下來");
+    run.next().await.unwrap();
+    let saved = run.suspend().unwrap();
+    assert_eq!(saved.version, SUSPENDED_VERSION);
+    assert_eq!(saved.run_id, run.run_id());
+    assert_eq!(saved.model, "test-model");
+    assert_eq!(saved.system.as_deref(), Some("你是助理"));
+    assert_eq!(
+        saved.messages,
+        [Message {
+            role: Role::User,
+            content: vec![text("記下來")]
+        }]
+    );
+    assert_eq!(saved.steps, []);
+    assert_eq!(saved.waiting.turn, 1);
+    assert_eq!(saved.pending, [pending("a", "x")]);
+    assert_eq!(saved.usage, usage());
+    // 這個 Run 結束了;那一輪在存檔裡,不在結果裡。
+    assert_eq!(run.next().await, None);
+    let finished = run.finish();
+    assert_eq!(finished.outcome, Outcome::Stopped);
+    assert_eq!(finished.steps, []);
+    assert!(g.done.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn only_a_run_waiting_for_answers_can_be_suspended() {
+    let provider = Scripted::new(vec![
+        Reply::Now(reply_with(&[danger("a", "x")])),
+        Reply::Now(text_reply("ok")),
+    ]);
+    let (agent, _) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("?");
+    assert_eq!(run.suspend(), None, "not started yet");
+    run.next().await.unwrap();
+    run.resolve(vec![("a".into(), Decision::Approve)]).unwrap();
+    assert_eq!(run.suspend(), None, "already answered");
+    // 沒有被動到:照常跑完。
+    drain(&mut run).await;
+    assert_eq!(
+        run.finish().outcome,
+        Outcome::Answered { text: "ok".into() }
+    );
+}
+
+#[tokio::test]
+async fn a_suspended_run_survives_a_round_trip_through_json() {
+    let provider = Scripted::new(vec![Reply::Now(reply_with(&[danger("a", "x")]))]);
+    let saved = paused(&*provider).await;
+    let json = serde_json::to_string(&saved).unwrap();
+    assert_eq!(serde_json::from_str::<Suspended>(&json).unwrap(), saved);
+    // 認不得的欄位不默默忽略。
+    let mut value = serde_json::to_value(&saved).unwrap();
+    value["surprise"] = json!(1);
+    assert!(serde_json::from_value::<Suspended>(value).is_err());
+}
+
+#[tokio::test]
+async fn a_resumed_run_asks_again_and_continues_where_it_stopped() {
+    let first = Scripted::new(vec![Reply::Now(reply_with(&[danger("a", "x")]))]);
+    let saved = paused(&*first).await;
+    // 程式重開:新的 provider、新的 agent。
+    let second = Scripted::new(vec![Reply::Now(text_reply("寫好了"))]);
+    let (agent, g) = guarded(&*second, ApprovalPolicy::Ask);
+    let mut run = agent.resume(saved.clone()).await.unwrap();
+    assert_eq!(run.run_id(), saved.run_id);
+    assert_eq!(
+        run.next().await,
+        Some(RunEvent::NeedsApproval(vec![pending("a", "x")]))
+    );
+    run.resolve(vec![("a".into(), Decision::Approve)]).unwrap();
+    let Some(RunEvent::Step(step)) = run.next().await else {
+        panic!("expected the paused turn to finish")
+    };
+    assert_eq!(
+        (step.turn, step.tool_calls[0].result.as_str()),
+        (1, "did x")
+    );
+    assert_eq!(*g.done.lock().unwrap(), ["x"]);
+    drain(&mut run).await;
+    let finished = run.finish();
+    assert_eq!(
+        finished.outcome,
+        Outcome::Answered {
+            text: "寫好了".into()
+        }
+    );
+    assert_eq!(finished.steps.len(), 2);
+    // 用量從暫停前接著加。
+    assert_eq!(finished.usage.input_tokens, 200);
+    // 新的 provider 收到的是完整的對話:任務、模型要呼叫工具、工具結果。
+    assert_eq!(first.requests().len(), 1);
+    let request = &second.requests()[0];
+    assert_eq!(request.messages.len(), 3);
+    assert_eq!(request.messages[0].content, [text("記下來")]);
+    assert_eq!(
+        request.messages[2].content,
+        [Content::ToolResult {
+            call_id: "a".into(),
+            content: "did x".into(),
+            is_error: false
+        }]
+    );
+}
+
+#[tokio::test]
+async fn resuming_recomputes_what_needs_approval() {
+    // 存檔被改過(等核准的清單被清空):照樣要問。
+    let first = Scripted::new(vec![Reply::Now(reply_with(&[danger("a", "x")]))]);
+    let mut saved = paused(&*first).await;
+    saved.pending.clear();
+    let second = Scripted::new(vec![]);
+    let (agent, g) = guarded(&*second, ApprovalPolicy::Ask);
+    let mut run = agent.resume(saved).await.unwrap();
+    assert_eq!(
+        run.next().await,
+        Some(RunEvent::NeedsApproval(vec![pending("a", "x")]))
+    );
+    assert!(g.done.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn resuming_with_auto_approve_runs_the_paused_turn_without_asking() {
+    let first = Scripted::new(vec![Reply::Now(reply_with(&[danger("a", "x")]))]);
+    let saved = paused(&*first).await;
+    let second = Scripted::new(vec![Reply::Now(text_reply("ok"))]);
+    let (agent, g) = guarded(&*second, ApprovalPolicy::AutoApprove);
+    let mut run = agent.resume(saved).await.unwrap();
+    assert!(matches!(run.next().await, Some(RunEvent::Step(_))));
+    assert_eq!(*g.done.lock().unwrap(), ["x"]);
+}
+
+#[tokio::test]
+async fn resuming_is_refused_when_the_setup_changed() {
+    let first = Scripted::new(vec![Reply::Now(reply_with(&[danger("a", "x")]))]);
+    let saved = paused(&*first).await;
+    let second = Scripted::new(vec![]);
+    let (agent, _) = guarded(&*second, ApprovalPolicy::Ask);
+    let refused = |s: Suspended| {
+        let agent = &agent;
+        async move { agent.resume(s).await.err() }
+    };
+
+    let mut s = saved.clone();
+    s.version = 2;
+    assert_eq!(
+        refused(s).await,
+        Some(ResumeError::Version {
+            found: 2,
+            expected: 1
+        })
+    );
+    let mut s = saved.clone();
+    s.model = "other".into();
+    assert_eq!(refused(s).await, Some(ResumeError::Changed("model")));
+    let mut s = saved.clone();
+    s.system = None;
+    assert_eq!(
+        refused(s).await,
+        Some(ResumeError::Changed("system prompt"))
+    );
+    let mut s = saved.clone();
+    s.max_tokens += 1;
+    assert_eq!(refused(s).await, Some(ResumeError::Changed("max_tokens")));
+    let mut s = saved.clone();
+    s.limits.max_turns += 1;
+    assert_eq!(refused(s).await, Some(ResumeError::Changed("limits")));
+    let mut s = saved.clone();
+    s.tools.pop();
+    assert_eq!(refused(s).await, Some(ResumeError::Changed("tools")));
+    let mut s = saved.clone();
+    s.waiting.response = text_reply("沒有工具呼叫");
+    assert_eq!(
+        refused(s).await,
+        Some(ResumeError::Invalid(
+            "the paused turn has no tool calls".into()
+        ))
+    );
+    assert!(refused(saved).await.is_none());
+    assert_eq!(
+        ResumeError::Changed("tools").to_string(),
+        "the tools changed since the run was paused; start a new run instead"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_time_used_before_suspending_still_counts_after_resuming() {
+    let first = Scripted::new(vec![Reply::After(
+        Duration::from_secs(6),
+        reply_with(&[danger("a", "x")]),
+    )]);
+    let (mut agent, _) = guarded(&*first, ApprovalPolicy::Ask);
+    agent.config.limits.deadline_secs = 10;
+    let mut run = agent.start("?");
+    run.next().await.unwrap();
+    let saved = run.suspend().unwrap();
+    assert_eq!(saved.used_ms, 6000);
+
+    tokio::time::sleep(Duration::from_secs(3600)).await;
+    let second = Scripted::new(vec![Reply::After(
+        Duration::from_secs(6),
+        text_reply("太晚了"),
+    )]);
+    let (mut agent, _) = guarded(&*second, ApprovalPolicy::AutoApprove);
+    agent.config.limits.deadline_secs = 10;
+    let mut run = agent.resume(saved).await.unwrap();
+    let resumed = Instant::now();
+    drain(&mut run).await;
+    assert_eq!(run.finish().outcome, limit(Limit::Deadline));
+    assert_eq!(resumed.elapsed(), Duration::from_secs(4));
 }
 
 // ---- 設定 ----

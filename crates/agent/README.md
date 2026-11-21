@@ -50,7 +50,10 @@ trajectory: ~/.local/share/ai-engineering-lab/agent/runs/20261114T023000Z_019a�
 
 ```
 agent run "問題" [--model <別名>] [--root <目錄>] [--allow-write] [--yes] [--system <檔案>] [--max-turns <N>] [--no-record] [--config agent.toml]
+agent resume <run id> [--yes]
 ```
+
+結束碼:0 回答了;1 執行了但沒有回答(拒答、撞到護欄、失敗);2 沒開始(設定、參數錯誤);3 停在等核准時存檔了。
 
 | 參數 | 說明 |
 |---|---|
@@ -93,6 +96,22 @@ allow? [y/N] y
 - 提示裡的文字(說明、參數)來自模型,印之前把控制字元、改變文字方向的 Unicode 字元換成 `?`:模型不能清畫面、偽造輸出,或讓 `txt.exe` 看起來像 `exe.txt`。
 - 同一輪裡有副作用的呼叫一起問;沒有副作用的工具等這一輪問完才跟著執行。**等你回答的時間不算進總時間上限**。
 - 每次的回答寫進軌跡(`{"type": "approval", "decisions": [...]}`),`--yes` 時軌跡的 `start` 有 `"auto_approve": true`。
+
+### 存檔、之後再核准
+
+在提示回答 `s`:這次執行存檔、結束(結束碼 3),印出 `agent resume <run id>`。之後(幾小時後、重開機之後都可以)接續:
+
+```bash
+agent resume 01a1fda1-0114-7620-9590-fce50786e53a        # 再問一次,然後接著跑
+agent resume 01a1fda1-0114-7620-9590-fce50786e53a --yes  # 不問
+```
+
+- 存檔在 `<資料目錄>/agent/runs/suspended/<run id>.json`(目錄 700、檔案 600);內容等同軌跡(對話、工具結果)。
+  接續時用存檔裡的選項(模型、system prompt、`--root`、`--allow-write`……)重建,同一個軌跡檔接著寫(`suspend`、`resume` 事件)。
+- **設定或工具變了就拒絕接續**(模型、system prompt、`max_tokens`、護欄、工具定義,包括 MCP server 給的):存檔保留,改回來可以再試。
+- 要核准的清單在接續時**重新算**:看到的改前改後是「現在」的檔案;存檔被動過也不會讓任何呼叫跳過核准。
+- 接續前先認領存檔(刪掉它),兩個 `agent resume` 同時接續同一個存檔時只有一個能繼續:核准的寫入不會執行兩次。
+- 暫停前用掉的時間照算,等待的時間不算。
 
 ## MCP server
 
@@ -199,6 +218,7 @@ impl agent::Tool for Weather {
 | `src/limits.rs` | 護欄的數值 |
 | `src/config.rs` | `agent.toml` 的形狀與檢查、費用計算 |
 | `src/trajectory.rs` | 軌跡的事件與寫檔(700 / 600) |
+| `src/saved.rs` | 暫停的執行存檔(`RunPlan` + `Suspended`)、讀回來、認領 |
 | `src/prompt.rs` | 預設的 system prompt |
 | `src/main.rs` | CLI(composition root:唯一讀設定檔、環境變數的地方) |
 | `tests/e2e.rs` | 真的執行 agent binary,上游是 wiremock(多輪工具呼叫、護欄、紀錄、軌跡) |

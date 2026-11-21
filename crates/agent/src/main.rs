@@ -4,6 +4,8 @@
 //! cp agent.example.toml agent.toml
 //! cargo run -p agent -- run "台北現在幾點?"
 //! cargo run -p agent -- run "notes 裡有哪些待辦?" --root ~/notes
+//! cargo run -p agent -- run "把待辦整理一下" --root ~/notes --allow-write   # 每次寫入都會問
+//! cargo run -p agent -- resume <run id>                                     # 接續存檔的執行
 //! ```
 //!
 //! 整個 agent 只有這個檔案讀設定檔、環境變數與 `.env`(D-016)。
@@ -11,20 +13,21 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use agent::cli::{Cli, Command, RunArgs, approves, terminal_safe};
+use agent::cli::{Answer, Cli, Command, ResumeArgs, RunArgs, answer, terminal_safe};
 use agent::config::{self, McpServer, McpTransport, RawConfig, Settings};
+use agent::saved::{self, RunPlan, SUSPENDED_DIR, SavedRun};
 use agent::tools::mcp::CallTool;
 use agent::tools::{
     Calculator, CurrentTime, EditFile, ListDir, ReadFile, Root, WriteFile, select_mcp_tools,
 };
 use agent::trajectory::{ApprovalRecord, Event, TrajectoryWriter};
 use agent::{
-    Agent, AgentConfig, Approval, ApprovalPolicy, Clock, DEFAULT_SYSTEM, Decision, ErasedTool,
-    Finished, Limit, Outcome, RunEvent, Step, Toolbox,
+    Agent, AgentConfig, AgentLimits, Approval, ApprovalPolicy, Clock, DEFAULT_SYSTEM, Decision,
+    ErasedTool, Finished, Limit, Outcome, Run, RunEvent, Step, Toolbox,
 };
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -39,16 +42,21 @@ use mcp::transport::{
 };
 use mcp::{ClientOptions, McpClient};
 
-/// 結束碼:0 = 回答了;1 = 執行了但沒有回答(拒答、撞到護欄、失敗);2 = 根本沒開始(設定、參數錯誤)。
+/// 存檔之後的結束碼(在等核准,還沒有答案)。
+const EXIT_SAVED: u8 = 3;
+
+/// 結束碼:0 = 回答了;1 = 執行了但沒有回答(拒答、撞到護欄、失敗);2 = 根本沒開始(設定、參數錯誤);
+/// 3 = 停在等核准時存檔了(`agent resume <run id>` 接續)。
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     dotenvy::dotenv().ok();
-    let result = match cli.command {
-        Command::Run(args) => match load_settings(&cli.config) {
-            Ok(settings) => run(&settings, args).await,
-            Err(e) => Err(e),
+    let result = match load_settings(&cli.config) {
+        Ok(settings) => match cli.command {
+            Command::Run(args) => run(&settings, args).await,
+            Command::Resume(args) => resume(&settings, args).await,
         },
+        Err(e) => Err(e),
     };
     match result {
         Ok(code) => code,
@@ -75,8 +83,50 @@ fn load_settings(path: &Path) -> Result<Settings> {
     )?)
 }
 
+/// `agent run`:把命令列整理成 `RunPlan`(存檔時存的就是它),從頭開始。
 async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
-    let model = args.model.clone().unwrap_or_else(|| settings.model.clone());
+    let system = match &args.system {
+        Some(path) => std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read the system prompt {}", path.display()))?,
+        None => DEFAULT_SYSTEM.to_string(),
+    };
+    let root =
+        match &args.root {
+            // 存成絕對路徑:接續時的目前目錄可能不一樣。
+            Some(dir) => Some(dir.canonicalize().with_context(|| {
+                format!("--root {} must be an existing directory", dir.display())
+            })?),
+            None => None,
+        };
+    let plan = RunPlan {
+        model: args.model.unwrap_or_else(|| settings.model.clone()),
+        system,
+        max_turns: args.max_turns,
+        root,
+        allow_write: args.allow_write,
+        record: !args.no_record,
+    };
+    execute(settings, plan, Begin::New(args.task), args.yes).await
+}
+
+/// `agent resume`:讀存檔,用存檔裡的選項重建 agent,接著問核准。
+async fn resume(settings: &Settings, args: ResumeArgs) -> Result<ExitCode> {
+    let dir = settings.runs_dir.join(SUSPENDED_DIR);
+    let saved = saved::load(&dir, args.run_id)?;
+    let plan = saved.plan.clone();
+    execute(settings, plan, Begin::Resume(Box::new(saved)), args.yes).await
+}
+
+/// 從哪裡開始。
+enum Begin {
+    New(String),
+    // `Box`:`SavedRun` 很大(整段對話),enum 的大小是最大的那個 variant;裝箱之後 `Begin` 只有一個指標大。
+    Resume(Box<SavedRun>),
+}
+
+/// 組裝 agent、執行到結束或存檔、收尾。`run` 與 `resume` 共用。
+async fn execute(settings: &Settings, plan: RunPlan, begin: Begin, yes: bool) -> Result<ExitCode> {
+    let model = plan.model.clone();
     if !settings.aliases.contains_key(&model) {
         let known: Vec<&str> = settings.aliases.keys().map(String::as_str).collect();
         bail!(
@@ -84,30 +134,25 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
             known.join(", ")
         );
     }
-    let system = match &args.system {
-        Some(path) => std::fs::read_to_string(path)
-            .with_context(|| format!("cannot read the system prompt {}", path.display()))?,
-        None => DEFAULT_SYSTEM.to_string(),
-    };
     let mut limits = settings.limits.clone();
-    if let Some(turns) = args.max_turns {
+    if let Some(turns) = plan.max_turns {
         limits.max_turns = turns;
     }
 
     let mut tools: Vec<Box<dyn ErasedTool>> = vec![Box::new(Calculator), Box::new(CurrentTime)];
     // 沒給 `--root` 就不提供檔案工具(design §7):模型連「有這種工具」都不知道。
-    if let Some(dir) = &args.root {
+    if let Some(dir) = &plan.root {
         let root = Root::new(dir)
             .with_context(|| format!("--root {} must be an existing directory", dir.display()))?;
         tools.push(Box::new(ReadFile::new(root.clone())));
         tools.push(Box::new(ListDir::new(root.clone())));
         // 有副作用的工具要另外打開(D-056);打開之後每次呼叫還要核准(`--yes` 才不問)。
-        if args.allow_write {
+        if plan.allow_write {
             tools.push(Box::new(WriteFile::new(root.clone())));
             tools.push(Box::new(EditFile::new(root)));
         }
     }
-    let (provider, records) = build_provider(settings, !args.no_record)?;
+    let (provider, records) = build_provider(settings, plan.record)?;
     // 所有 MCP server 在第一次呼叫模型之前連好、挑好工具;任何一個失敗就結束(結束碼 2),一毛錢都還沒花(design-part2 §6)。
     let mcp_clients = connect_mcp(&settings.mcp, &mut tools).await?;
     let toolbox = Arc::new(Toolbox::new(tools)?);
@@ -118,12 +163,12 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
         toolbox,
         AgentConfig {
             model: model.clone(),
-            system: Some(system),
+            system: Some(plan.system.clone()),
             max_tokens: settings.max_tokens,
             limits: limits.clone(),
             clock: Clock::System,
             provider_options: ProviderMetadata::default(),
-            approval: if args.yes {
+            approval: if yes {
                 ApprovalPolicy::AutoApprove
             } else {
                 ApprovalPolicy::Ask
@@ -131,58 +176,77 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
         },
     )?;
 
-    let started_at = Timestamp::now();
-    let mut run = agent.start(args.task.clone());
-    // 軌跡檔在第一次呼叫模型之前就建好:目錄有問題(權限太寬)時,一毛錢都還沒花就停下來。
-    let mut trajectory = TrajectoryWriter::create(&settings.runs_dir, started_at, run.run_id())
-        .with_context(|| {
-            format!(
-                "cannot create a trajectory in {}",
-                settings.runs_dir.display()
-            )
-        })?;
-    let mut write = |event: &Event| {
-        // 軌跡是附帶的紀錄:寫入失敗不中斷回答,但要大聲說出來(同 D-021 的呼叫紀錄)。
-        if let Err(e) = trajectory.write(event) {
-            eprintln!("warning: could not write the trajectory: {e}");
+    let (mut run, mut trajectory) = match begin {
+        Begin::New(task) => {
+            let started_at = Timestamp::now();
+            let run = agent.start(task.clone());
+            // 軌跡檔在第一次呼叫模型之前就建好:目錄有問題(權限太寬)時,一毛錢都還沒花就停下來。
+            let mut trajectory =
+                TrajectoryWriter::create(&settings.runs_dir, started_at, run.run_id())
+                    .with_context(|| {
+                        format!(
+                            "cannot create a trajectory in {}",
+                            settings.runs_dir.display()
+                        )
+                    })?;
+            record(
+                &mut trajectory,
+                &Event::Start {
+                    run_id: run.run_id(),
+                    started_at,
+                    model,
+                    task,
+                    tools: tool_names,
+                    limits: limits.clone(),
+                    auto_approve: yes,
+                },
+            );
+            (run, trajectory)
+        }
+        Begin::Resume(saved) => {
+            let run_id = saved.suspended.run_id;
+            // 先確認接得上(設定、工具一樣),再認領存檔:接不上的話存檔還在,改好設定可以再試。
+            let run = agent
+                .resume(saved.suspended)
+                .await
+                .context("cannot resume the run")?;
+            let mut trajectory =
+                TrajectoryWriter::append(&saved.trajectory).with_context(|| {
+                    format!(
+                        "cannot continue the trajectory {}",
+                        saved.trajectory.display()
+                    )
+                })?;
+            // 認領在執行任何東西之前:同一個存檔被接續兩次時,只有一個能繼續。
+            saved::claim(&settings.runs_dir.join(SUSPENDED_DIR), run_id)?;
+            record(
+                &mut trajectory,
+                &Event::Resume {
+                    resumed_at: Timestamp::now(),
+                },
+            );
+            eprintln!("resuming run {run_id}");
+            (run, trajectory)
         }
     };
-    write(&Event::Start {
-        run_id: run.run_id(),
-        started_at,
-        model,
-        task: args.task,
-        tools: tool_names,
-        limits: limits.clone(),
-        auto_approve: args.yes,
-    });
-    while let Some(event) = run.next().await {
-        match event {
-            RunEvent::Step(step) => {
-                print_step(&step);
-                write(&Event::Step { step });
-            }
-            RunEvent::NeedsApproval(pending) => {
-                let decisions = ask(pending).await?;
-                write(&Event::Approval {
-                    decisions: decisions.clone(),
-                });
-                run.resolve(
-                    decisions
-                        .into_iter()
-                        .map(|d| (d.call_id, d.decision))
-                        .collect(),
-                )?;
-            }
-        }
-    }
+
+    let ending = drive(&mut run, &mut trajectory).await?;
+    let saved_to = match ending {
+        Ending::Finished => None,
+        Ending::Save => Some(save(settings, &plan, &mut run, &mut trajectory)?),
+    };
     let finished = run.finish();
     let cost = config::cost(&finished.steps, &settings.prices);
-    write(&Event::Finish {
-        outcome: finished.outcome.clone(),
-        usage: finished.usage,
-        cost_usd: cost,
-    });
+    if saved_to.is_none() {
+        record(
+            &mut trajectory,
+            &Event::Finish {
+                outcome: finished.outcome.clone(),
+                usage: finished.usage,
+                cost_usd: cost,
+            },
+        );
+    }
     let path = trajectory.path().to_path_buf();
 
     // provider 鏈裡的 Record 也拿著一份 writer:先丟掉 agent(它借著 provider)和 provider 本身,writer 才只剩我們這一份。
@@ -193,6 +257,14 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
     }
     close_mcp(mcp_clients).await;
 
+    if let Some(file) = saved_to {
+        eprintln!(
+            "saved while waiting for approval: {}\ncontinue with: agent resume {}",
+            file.display(),
+            finished.run_id
+        );
+        return Ok(ExitCode::from(EXIT_SAVED));
+    }
     print_summary(&finished, cost, &limits, &path);
     Ok(match &finished.outcome {
         Outcome::Answered { text } => {
@@ -206,43 +278,109 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
     })
 }
 
+/// 執行怎麼停下來的。
+enum Ending {
+    Finished,
+    /// 使用者在核准提示回答 `s`。
+    Save,
+}
+
+/// 一步一步跑,遇到要核准的就問。
+async fn drive(run: &mut Run<'_>, trajectory: &mut TrajectoryWriter) -> Result<Ending> {
+    while let Some(event) = run.next().await {
+        match event {
+            RunEvent::Step(step) => {
+                print_step(&step);
+                record(trajectory, &Event::Step { step });
+            }
+            RunEvent::NeedsApproval(pending) => {
+                let Some(decisions) = ask(pending).await? else {
+                    return Ok(Ending::Save);
+                };
+                record(
+                    trajectory,
+                    &Event::Approval {
+                        decisions: decisions.clone(),
+                    },
+                );
+                run.resolve(
+                    decisions
+                        .into_iter()
+                        .map(|d| (d.call_id, d.decision))
+                        .collect(),
+                )?;
+            }
+        }
+    }
+    Ok(Ending::Finished)
+}
+
+/// 存檔:`Run` 交出暫停的狀態,連同建立 agent 的選項寫進私有目錄。
+fn save(
+    settings: &Settings,
+    plan: &RunPlan,
+    run: &mut Run<'_>,
+    trajectory: &mut TrajectoryWriter,
+) -> Result<PathBuf> {
+    let suspended = run
+        .suspend()
+        .context("the run is not waiting for approval")?;
+    let saved = SavedRun {
+        plan: plan.clone(),
+        trajectory: trajectory.path().to_path_buf(),
+        suspended,
+    };
+    let dir = settings.runs_dir.join(SUSPENDED_DIR);
+    let file = saved::save(&dir, &saved)
+        .with_context(|| format!("cannot save the run in {}", dir.display()))?;
+    record(trajectory, &Event::Suspend { file: file.clone() });
+    Ok(file)
+}
+
+/// 寫一行軌跡。軌跡是附帶的紀錄:寫入失敗不中斷回答,但要大聲說出來(同 D-021 的呼叫紀錄)。
+fn record(trajectory: &mut TrajectoryWriter, event: &Event) {
+    if let Err(e) = trajectory.write(event) {
+        eprintln!("warning: could not write the trajectory: {e}");
+    }
+}
+
 /// 在終端機上一個一個問(stderr 印說明、stdin 讀回答)。只有 `y` / `yes` 是核准;空白行、其他回答、
-/// stdin 已經結束(例如被管線接上又關掉)一律是拒絕(fail-closed)。
+/// stdin 已經結束(例如被管線接上又關掉)一律是拒絕(fail-closed)。`s` / `save`:不再問,回傳 `None`(存檔)。
 ///
 /// 讀 stdin 會卡住執行緒,所以放到 `spawn_blocking`:async runtime 的執行緒還要處理別的事(MCP 連線的背景 task)。
-async fn ask(pending: Vec<Approval>) -> Result<Vec<ApprovalRecord>> {
+async fn ask(pending: Vec<Approval>) -> Result<Option<Vec<ApprovalRecord>>> {
     let decisions = tokio::task::spawn_blocking(move || {
         let stdin = std::io::stdin();
-        pending
-            .into_iter()
-            .map(|approval| {
-                eprintln!(
-                    "\n── approval needed: {} ({})",
-                    terminal_safe(&approval.tool),
-                    terminal_safe(&approval.call_id)
-                );
-                eprintln!("{}", terminal_safe(&approval.description));
-                eprint!("allow? [y/N] ");
-                let mut answer = String::new();
-                let approved = match stdin.lock().read_line(&mut answer) {
-                    Ok(read) => read > 0 && approves(&answer),
-                    Err(_) => false,
-                };
-                if answer.is_empty() {
-                    // stdin 已經結束:換行補上,下一行輸出才不會接在提示後面。
-                    eprintln!();
-                }
-                ApprovalRecord {
-                    call_id: approval.call_id,
-                    tool: approval.tool,
-                    decision: if approved {
-                        Decision::Approve
-                    } else {
-                        Decision::Deny
-                    },
-                }
-            })
-            .collect()
+        let mut decisions = Vec::new();
+        for approval in pending {
+            eprintln!(
+                "\n── approval needed: {} ({})",
+                terminal_safe(&approval.tool),
+                terminal_safe(&approval.call_id)
+            );
+            eprintln!("{}", terminal_safe(&approval.description));
+            eprint!("allow? [y/N, s = save and stop] ");
+            let mut line = String::new();
+            let reply = match stdin.lock().read_line(&mut line) {
+                Ok(read) if read > 0 => answer(&line),
+                _ => Answer::Deny,
+            };
+            if line.is_empty() {
+                // stdin 已經結束:換行補上,下一行輸出才不會接在提示後面。
+                eprintln!();
+            }
+            let decision = match reply {
+                Answer::Approve => Decision::Approve,
+                Answer::Deny => Decision::Deny,
+                Answer::Save => return None,
+            };
+            decisions.push(ApprovalRecord {
+                call_id: approval.call_id,
+                tool: approval.tool,
+                decision,
+            });
+        }
+        Some(decisions)
     })
     .await
     .context("the approval prompt failed")?;
@@ -414,7 +552,7 @@ fn preview(text: &str) -> String {
     short
 }
 
-fn print_summary(finished: &Finished, cost: Option<f64>, limits: &agent::AgentLimits, path: &Path) {
+fn print_summary(finished: &Finished, cost: Option<f64>, limits: &AgentLimits, path: &Path) {
     let tools: usize = finished.steps.iter().map(|s| s.tool_calls.len()).sum();
     let cost = cost.map_or("unknown".to_string(), |c| format!("${c:.4}"));
     eprintln!(
@@ -429,7 +567,7 @@ fn print_summary(finished: &Finished, cost: Option<f64>, limits: &agent::AgentLi
     eprintln!("trajectory: {}", path.display());
 }
 
-fn describe(outcome: &Outcome, limits: &agent::AgentLimits) -> String {
+fn describe(outcome: &Outcome, limits: &AgentLimits) -> String {
     match outcome {
         Outcome::Answered { .. } => "answered".into(),
         Outcome::Refused => "the model refused to answer".into(),

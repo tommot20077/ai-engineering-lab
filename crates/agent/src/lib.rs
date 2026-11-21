@@ -8,6 +8,7 @@ pub mod config;
 mod limits;
 mod prompt;
 mod run;
+pub mod saved;
 mod tool;
 pub mod tools;
 pub mod trajectory;
@@ -16,6 +17,7 @@ pub use limits::AgentLimits;
 pub use prompt::DEFAULT_SYSTEM;
 pub use run::{
     Agent, AgentConfig, AgentFailure, Approval, ApprovalPolicy, ConfigError, DENIED, Decision,
-    Finished, Limit, Outcome, ResolveError, Run, RunEvent, Step, ToolCallRecord,
+    Finished, Limit, Outcome, ResolveError, ResumeError, Run, RunEvent, SUSPENDED_VERSION, Step,
+    Suspended, ToolCallRecord,
 };
 pub use tool::{Clock, ErasedTool, Tool, ToolContext, ToolError, Toolbox, ToolboxError};

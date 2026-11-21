@@ -137,6 +137,59 @@ impl<'p> Agent<'p> {
         }
     }
 
+    /// 接續一個暫停(`Run::suspend`)過的執行。設定與工具必須跟暫停時一樣,不一樣就拒絕(D-057)。
+    ///
+    /// 等核准的清單**重新算一次**,不用存檔裡的:說明(例如 `edit_file` 改前改後)要反映「現在」的檔案,
+    /// 而且存檔被改過也不會讓哪個呼叫跳過核准。用 `ApprovalPolicy::AutoApprove` 時清單是空的,下一次 `next()` 直接執行。
+    pub async fn resume(&self, saved: Suspended) -> Result<Run<'_>, ResumeError> {
+        if saved.version != SUSPENDED_VERSION {
+            return Err(ResumeError::Version {
+                found: saved.version,
+                expected: SUSPENDED_VERSION,
+            });
+        }
+        let config = &self.config;
+        let changed = [
+            ("model", saved.model != config.model),
+            ("system prompt", saved.system != config.system),
+            ("max_tokens", saved.max_tokens != config.max_tokens),
+            ("limits", saved.limits != config.limits),
+            ("tools", saved.tools != self.tools),
+        ];
+        if let Some((what, _)) = changed.iter().find(|(_, changed)| *changed) {
+            return Err(ResumeError::Changed(what));
+        }
+        let calls = tool_calls(&saved.waiting.response);
+        if calls.is_empty() {
+            return Err(ResumeError::Invalid(
+                "the paused turn has no tool calls".into(),
+            ));
+        }
+        let mut run = Run {
+            agent: self,
+            run_id: saved.run_id,
+            messages: saved.messages,
+            steps: saved.steps,
+            usage: saved.usage,
+            tool_calls: saved.tool_calls,
+            call_ids: saved.call_ids.into_iter().collect(),
+            used: Duration::from_millis(saved.used_ms),
+            since: Instant::now(),
+            waiting: None,
+            outcome: None,
+        };
+        let approvals = run.approvals(&calls).await;
+        // 不用問的時候(AutoApprove,或工具已經不需要核准)直接當作回答完了。
+        let decisions = approvals.is_empty().then(HashMap::new);
+        run.waiting = Some(Waiting {
+            step: saved.waiting,
+            calls,
+            approvals,
+            decisions,
+        });
+        Ok(run)
+    }
+
     /// 一次跑完,不需要一步一步看的時候用。
     ///
     /// 沒有人可以問:`ApprovalPolicy::Ask` 時,要核准的呼叫**全部拒絕**(fail-closed),模型會收到「使用者拒絕」。
@@ -149,8 +202,11 @@ impl<'p> Agent<'p> {
                     .into_iter()
                     .map(|a| (a.call_id, Decision::Deny))
                     .collect();
-                // 剛剛才拿到的清單,一定對得上;萬一對不上,`next()` 會再問一次,不會執行任何東西。
-                let _ = run.resolve(deny_all);
+                // 剛剛才拿到的清單,一定對得上。萬一回答沒有被收下(還有人在等),就停在這裡:
+                // 再拉一次只會拿到同一份清單,這個迴圈會永遠轉下去。
+                if run.resolve(deny_all).is_err() || !run.pending().is_empty() {
+                    break;
+                }
             }
         }
         run.finish()
@@ -219,6 +275,49 @@ pub enum ResolveError {
     Duplicate(String),
     #[error("tool call {0:?} has no answer")]
     Missing(String),
+}
+
+/// 存檔格式的版本。欄位改了就加 1;讀到別的版本就拒絕接續(不猜怎麼轉換)。
+pub const SUSPENDED_VERSION: u32 = 1;
+
+/// 暫停中的執行,可以序列化存檔(`Run::suspend`),之後 `Agent::resume` 接續(D-057)。
+///
+/// 內容等同軌跡(對話、工具結果),存的地方要跟軌跡一樣私有(D-017)。
+// `deny_unknown_fields`:存檔是我們自己寫的,多了不認得的欄位代表格式不對,不要默默忽略。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Suspended {
+    pub version: u32,
+    pub run_id: Uuid,
+    /// 暫停時的設定與工具:接續時要一樣。
+    pub model: String,
+    pub system: Option<String>,
+    pub max_tokens: u32,
+    pub limits: AgentLimits,
+    pub tools: Vec<ToolDef>,
+    /// 對話與計數器。
+    pub messages: Vec<Message>,
+    pub steps: Vec<Step>,
+    pub usage: Usage,
+    pub tool_calls: u32,
+    pub call_ids: Vec<String>,
+    /// 暫停前已經用掉的時間(總時間上限只算真的在跑的時間)。
+    pub used_ms: u64,
+    /// 停在這一輪:模型的回應(要呼叫的工具在裡面),工具還沒執行。
+    pub waiting: Step,
+    /// 暫停時等核准的清單。只是紀錄:接續時會重新算。
+    pub pending: Vec<Approval>,
+}
+
+/// 接續不了。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ResumeError {
+    #[error("the saved run has format version {found}; this agent reads version {expected}")]
+    Version { found: u32, expected: u32 },
+    #[error("the {0} changed since the run was paused; start a new run instead")]
+    Changed(&'static str),
+    #[error("the saved run is invalid: {0}")]
+    Invalid(String),
 }
 
 /// 停下來等核准的一輪:模型的回應已經拿到(用量也算進去了),工具還沒執行。
@@ -400,6 +499,38 @@ impl Run<'_> {
         waiting.decisions = Some(answers);
         self.since = Instant::now();
         Ok(())
+    }
+
+    /// 停在等回答的時候,把整個狀態拿出來存檔(`Agent::resume` 接續)。之後這個 `Run` 就結束了
+    /// (`next()` 回 `None`,`finish()` 是 `Stopped`、不含那一輪,那一輪在存檔裡)。
+    /// 不是在等回答就回 `None`、什麼都不改。
+    pub fn suspend(&mut self) -> Option<Suspended> {
+        if self.pending().is_empty() {
+            return None;
+        }
+        let waiting = self.waiting.take()?;
+        let config = &self.agent.config;
+        self.outcome = Some(Outcome::Stopped);
+        let mut call_ids: Vec<String> = self.call_ids.iter().cloned().collect();
+        // HashSet 的順序每次不同;排序之後同一個狀態存出來的檔案一樣。
+        call_ids.sort();
+        Some(Suspended {
+            version: SUSPENDED_VERSION,
+            run_id: self.run_id,
+            model: config.model.clone(),
+            system: config.system.clone(),
+            max_tokens: config.max_tokens,
+            limits: config.limits.clone(),
+            tools: self.agent.tools.clone(),
+            messages: self.messages.clone(),
+            steps: self.steps.clone(),
+            usage: self.usage,
+            tool_calls: self.tool_calls,
+            call_ids,
+            used_ms: u64::try_from(self.used.as_millis()).unwrap_or(u64::MAX),
+            waiting: waiting.step,
+            pending: waiting.approvals,
+        })
     }
 
     /// 結束這次執行,拿到完整結果。還沒結束就呼叫,結果是 `Stopped`;停在等核准時,那一輪(模型的回應,沒有工具結果)也算進去。

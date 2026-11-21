@@ -40,6 +40,14 @@ pub enum Event {
     Approval {
         decisions: Vec<ApprovalRecord>,
     },
+    /// 停在等核准時存檔了(`agent resume <run id>` 接續)。之後同一個檔案會接著寫 `resume`。
+    Suspend {
+        file: PathBuf,
+    },
+    /// 接續(可能是幾小時之後、另一個行程)。
+    Resume {
+        resumed_at: Timestamp,
+    },
     Finish {
         outcome: Outcome,
         usage: Usage,
@@ -78,6 +86,35 @@ impl TrajectoryWriter {
         Ok(TrajectoryWriter { path, file })
     }
 
+    /// 接著寫一個已經存在的軌跡(`agent resume`)。檔案必須只有自己讀寫得到(同建立時的 600)。
+    pub fn append(path: &Path) -> io::Result<TrajectoryWriter> {
+        // 軌跡的路徑來自存檔:不接受 symlink(不被帶去寫別的檔案)。目錄本身是 700,別人換不了裡面的東西。
+        if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is a symbolic link", path.display()),
+            ));
+        }
+        let file = OpenOptions::new().append(true).open(path)?;
+        #[cfg(unix)]
+        {
+            let mode = file.metadata()?.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "{} is accessible by other users (mode {mode:o}); run `chmod 600` on it",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        Ok(TrajectoryWriter {
+            path: path.to_path_buf(),
+            file,
+        })
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -92,7 +129,8 @@ impl TrajectoryWriter {
     }
 }
 
-fn ensure_private_dir(dir: &Path) -> io::Result<()> {
+/// 建立(或確認)只有自己進得去的目錄(700)。存檔(`saved.rs`)也用它。
+pub(crate) fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     let mut builder = DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
