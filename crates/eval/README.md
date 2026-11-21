@@ -74,7 +74,10 @@ cargo run -p eval --release -- compare <執行目錄 A> <執行目錄 B>
 ```
 
 - **案例不指定模型**:模型是執行時的變數(`--model`),同一份資料集才能比較不同模型。
-- **確定性檢查**(`checks`):`exact`、`contains`、`not_contains`、`regex`、`json`(可指定必要欄位)。不花錢、每次結果一樣。
+- **確定性檢查**(`checks`):`exact`、`contains`、`not_contains`、`regex`、`json`(可指定必要欄位)、`compiles`。不花錢、每次結果一樣。
+  `compiles`(003 第三部分):回答裡**最後一個** ` ```rust ` 區塊在容器沙箱裡用 `rustc --edition 2024` 編譯(只編譯、不執行;
+  `[sandbox]` 設定,見 [`crates/sandbox`](../sandbox/README.md))。沒有程式碼區塊、編譯失敗、逾時是沒通過(理由只放 rustc 的第一行錯誤,
+  不放程式碼);沙箱本身不能用(沒有 docker、image 不在)是**錯誤**,不是沒通過,修好之後可以重新打分。
 - **評分標準**(`rubric`):一條一句,由 LLM 評審逐條判斷通過或不通過。至少要有一條檢查或評分標準。
 - **`max_tokens` 要給足**:thinking 也算在裡面(Claude Haiku 5.5 預設開啟 thinking),太小會還沒寫答案就被截斷。
 - 讀檔時就檢查全部的案例(重複 id、未知欄位、壞掉的 regex……),有問題就拒絕整個資料集,一次列出全部問題與行號。
@@ -83,7 +86,7 @@ cargo run -p eval --release -- compare <執行目錄 A> <執行目錄 B>
 
 | | 位置 | 進 git? | 用途 |
 |---|---|---|---|
-| 公開 | repo 的 [`evals/`](../../evals/) | 是 | `smoke`(CI 用,只有確定性檢查)、`rust-basics`(12 題基礎 Rust 問答)、`rust-intermediate`(31 題:19 題的標準答案由 rustc 決定,12 題開放式)、`agent-basics`(18 題 agent 題,見下面「agent 的題目」)與它的對照組 `agent-basics-notools` |
+| 公開 | repo 的 [`evals/`](../../evals/) | 是 | `smoke`(CI 用,只有確定性檢查)、`rust-basics`(12 題基礎 Rust 問答)、`rust-intermediate`(31 題:19 題的標準答案由 rustc 決定,12 題開放式)、`rust-fix`(8 題:把 `rust-intermediate` 的編譯錯誤題改寫成「修好它、給完整程式」,`compiles` + 不准 `unsafe` + 評分標準「保持原本的意圖」)、`agent-basics`(18 題 agent 題,見下面「agent 的題目」)與它的對照組 `agent-basics-notools` |
 | 私有 | `<資料目錄>/eval/datasets/`(700 / 600) | 否 | 真實對話(`eval add` 從呼叫紀錄加),只有自己讀得到 |
 
 `--dataset rust-basics` 先找私有的、再找公開的;兩邊同名就拒絕。也可以直接給 `.jsonl` 的路徑。
@@ -250,7 +253,7 @@ cargo run -p eval --example offline         # 完整流程的示範
 | 層 | 在哪裡 | 測什麼 |
 |---|---|---|
 | 單元 | `src/**/tests.rs` | 每個模組的規則:資料集檢查、打分、統計(含獨立 Python 實作算出的已知答案)、報告(insta snapshot)、設定、命令列 |
-| 資料集 | `tests/datasets.rs` | `evals/` 裡的每個公開資料集都讀得進來;參考答案通過自己的檢查,差一點的答案被擋下;`rust-intermediate` 的標準答案跟 rustc 一致(每次都真的編譯、執行);agent 題的根目錄存在、裡面沒有資料集;對照組只差工具 |
+| 資料集 | `tests/datasets.rs` | `evals/` 裡的每個公開資料集都讀得進來;參考答案通過自己的檢查,差一點的答案被擋下;`rust-intermediate` 的標準答案跟 rustc 一致(每次都真的編譯、執行);`rust-fix` 的參考答案編譯得過、題目裡原本的程式編譯不過(參考答案是自己寫的、可信,用本機 rustc 的 `Sandbox` 實作);agent 題的根目錄存在、裡面沒有資料集;對照組只差工具 |
 | E2E | `tests/e2e.rs` | 真的執行 eval 程式,上游是 wiremock:`run` → `score` → `compare`、雜訊底線、評審與自我偏好警告、預算與接續、`add` |
 
 每次 push,CI 會用 cargo-mutants 對改到的程式行做 mutation testing(D-036)。

@@ -22,7 +22,7 @@ use eval::calibration::report::{CalibrationReport, JudgeName};
 use eval::cli::{AddArgs, CalibrateArgs, Cli, Command, CompareArgs, RunArgs, ScoreArgs};
 use eval::config::{RawConfig, Settings};
 use eval::run::{self, Estimate, ExecOptions, Price, RunConfig, Summary};
-use eval::score::{self, Judge, ScoreSetup, ScoreSummary};
+use eval::score::{self, Checks, Judge, ScoreSetup, ScoreSummary};
 use eval::store::{self, RunDir};
 use eval::{Dataset, compare};
 use jiff::Timestamp;
@@ -30,6 +30,7 @@ use llm::{
     AliasTable, AnthropicClient, AnthropicConfig, EventStream, LlmError, LlmProvider,
     LlmProviderExt, Request,
 };
+use sandbox::{ContainerSandbox, Sandbox};
 
 // `anyhow::Result`:binary 只需要把錯誤和它的原因鏈印給人看(同 gateway)。
 #[tokio::main]
@@ -206,10 +207,14 @@ async fn score_command(settings: &Settings, args: &ScoreArgs) -> Result<()> {
     };
     let judge =
         judge_alias.map(|alias| Judge::new(provider.clone(), alias, &settings.judge.effort));
+    // `compiles` 用的沙箱。建立只是檢查設定;docker 要到真的有 `compiles` 檢查時才會被叫到。
+    let sandbox: Arc<dyn Sandbox> = Arc::new(ContainerSandbox::new(settings.sandbox.clone())?);
+    let checks = Checks::new(Some(sandbox));
     let setup = ScoreSetup {
         name: &name,
         judge: judge.as_ref(),
         skip_on_check_failure: args.skip_on_check_failure(settings.judge.skip_on_check_failure),
+        checks: &checks,
     };
 
     if args.dry_run {

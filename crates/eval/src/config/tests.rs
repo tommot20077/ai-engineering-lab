@@ -70,6 +70,7 @@ fn defaults_fill_in_everything_that_is_optional() {
             // 跟 gateway 的預設一樣:gateway 資料目錄底下的 records。
             records_dir: "/data/gateway/records".into(),
             retry: RetryPolicy::default(),
+            sandbox: sandbox::ContainerConfig::default(),
         }
     );
 }
@@ -386,5 +387,24 @@ fn eval_add_writes_only_private_datasets_by_name() {
             name: "smoke".into(),
             public: s.public_datasets.join("smoke.jsonl"),
         }
+    );
+}
+
+#[test]
+fn the_sandbox_for_compiles_has_defaults_and_is_checked() {
+    let s = settings(MINIMAL).unwrap();
+    assert_eq!(s.sandbox, sandbox::ContainerConfig::default());
+    let (tmp, file) = load(&format!(
+        "{MINIMAL}[sandbox]\nprogram = \"bin/docker\"\ncompile_timeout_secs = 9\n"
+    ));
+    let s = Settings::from_config(&file, fake_data_dir).unwrap();
+    assert_eq!(
+        s.sandbox.program,
+        tmp.path().join("bin/docker").to_string_lossy()
+    );
+    assert_eq!(s.sandbox.limits.compile_timeout, Duration::from_secs(9));
+    assert_eq!(
+        problems(&format!("{MINIMAL}[sandbox]\npids = 0\n")),
+        ["invalid sandbox configuration: the sandbox limit `pids` must be greater than 0"]
     );
 }

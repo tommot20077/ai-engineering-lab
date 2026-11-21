@@ -58,3 +58,11 @@ datasets = "evals"
 # [prices."claude-opus-5-5"]
 # input = 0.0
 # output = 0.0
+
+# `compiles` 檢查的沙箱(003 第三部分):回答裡最後一個 ```rust 區塊在容器裡編譯(只編譯、不執行)。
+# 資料集沒有 `compiles` 時用不到;用到時要 Docker(或 Podman)與鎖定的 image(沙箱不自動下載):
+#   docker pull "$(cargo run -q -p sandbox --example run_rust -- --image)"
+# 欄位跟 agent.toml 的 [sandbox] 一樣(說明見 agent.example.toml),都可以省略。
+[sandbox]
+# program = "docker"
+# compile_timeout_secs = 20

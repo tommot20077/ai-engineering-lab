@@ -35,6 +35,8 @@ pub struct ScoreSetup<'a> {
     pub judge: Option<&'a Judge>,
     /// 確定性檢查沒過就不叫評審(D-034)。`--judge-all` 把它關掉。
     pub skip_on_check_failure: bool,
+    /// 確定性檢查(`compiles` 要用的沙箱在它裡面)。
+    pub checks: &'a Checks,
 }
 
 /// 寫進 `<name>.meta.json` 的設定。同一個名字再打一次時必須完全一樣;`compare` 也靠它判斷兩份打分能不能比(design §7)。
@@ -300,7 +302,7 @@ async fn score_one(
             let checks = case
                 .checks
                 .iter()
-                .map(|check| skipped(Checks.name(), &check.to_string(), NO_ANSWER));
+                .map(|check| skipped(setup.checks.name(), &check.to_string(), NO_ANSWER));
             // 有評分標準就一定有評審(`prepare` 擋過),所以這裡的名字一定拿得到。
             let judge = setup.judge.map_or("judge", |j| j.name());
             let rubric = case.rubric.iter().map(|c| skipped(judge, c, NO_ANSWER));
@@ -309,7 +311,7 @@ async fn score_one(
         }
     };
 
-    scored.verdicts = Checks.score(case, output).await.verdicts;
+    scored.verdicts = setup.checks.score(case, output).await.verdicts;
     let judge = setup.judge.filter(|_| !case.rubric.is_empty());
     match judge {
         None => {}

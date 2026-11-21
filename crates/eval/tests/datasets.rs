@@ -9,6 +9,10 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+
+use futures::future::BoxFuture;
+use sandbox::{Action, Report, Sandbox, SandboxError};
 
 // `as`:這個檔案已經有一個 `Kind`(題型),校準集的「改法」換個名字引入。Java 遇到同名類別只能寫完整的套件名。
 use eval::calibration::{CalibrationSet, Kind as AnswerKind};
@@ -51,6 +55,7 @@ fn every_public_dataset_is_valid() {
             "agent-basics",
             "agent-basics-notools",
             "rust-basics",
+            "rust-fix",
             "rust-intermediate",
             "smoke"
         ]
@@ -69,6 +74,46 @@ fn the_smoke_dataset_needs_no_judge() {
 }
 
 /// 把一段文字包成「模型的回答」,交給打分器。
+/// 用本機的 rustc 編譯:**只給我們自己寫的參考答案用**(可信的程式碼)。模型的回答一律在容器沙箱裡編譯(D-054)。
+/// 在 crate 目錄執行,rustup 才會讀到 repo 的 `rust-toolchain.toml`(跟沙箱的 image 同一版)。
+struct LocalRustc;
+
+impl Sandbox for LocalRustc {
+    fn rust<'a>(
+        &'a self,
+        source: &'a str,
+        action: Action,
+    ) -> BoxFuture<'a, Result<Report, SandboxError>> {
+        assert_eq!(action, Action::Compile, "the dataset checks only compile");
+        Box::pin(async move {
+            let dir = tempfile::tempdir().unwrap();
+            let src = dir.path().join("main.rs");
+            std::fs::write(&src, source).unwrap();
+            let out = Command::new("rustc")
+                .current_dir(env!("CARGO_MANIFEST_DIR"))
+                .args(["--edition", "2024", "--crate-name", "main", "-o"])
+                .arg(dir.path().join("main"))
+                .arg(&src)
+                .output()
+                .unwrap();
+            Ok(Report {
+                compile: sandbox::Output {
+                    exit_code: out.status.code(),
+                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                    timed_out: false,
+                    truncated: false,
+                },
+                run: None,
+            })
+        })
+    }
+}
+
+fn local_checks() -> Checks {
+    Checks::new(Some(Arc::new(LocalRustc)))
+}
+
 fn answer(text: &str) -> Output {
     // 用 JSON 建構,跟 `responses.jsonl` 裡存的格式一樣,不必在測試裡寫出 `llm::Response` 的每個欄位。
     serde_json::from_value(json!({
@@ -88,7 +133,7 @@ async fn every_reference_answer_passes_its_own_checks() {
             let Some(reference) = &case.reference else {
                 continue;
             };
-            let scored = Checks.score(case, &answer(reference)).await;
+            let scored = local_checks().score(case, &answer(reference)).await;
             for v in scored.verdicts {
                 if v.result != VerdictResult::Pass {
                     problems.push(format!(
@@ -138,7 +183,7 @@ async fn the_last_line_check_accepts_formatting_but_not_other_answers() {
         (output, "理由。\n6 5 Some(3, 'l')", false),
     ];
     for (case, text, should_pass) in cases {
-        let scored = Checks.score(case, &answer(text)).await;
+        let scored = Checks::default().score(case, &answer(text)).await;
         let passed = scored
             .verdicts
             .iter()
@@ -484,7 +529,7 @@ async fn the_agent_answer_checks_reject_near_misses() {
         let case = ds.cases.iter().find(|c| c.id == id).unwrap().clone();
         let text = text.to_string();
         async move {
-            Checks
+            Checks::default()
                 .score(&case, &answer(&text))
                 .await
                 .verdicts
@@ -512,4 +557,31 @@ async fn the_agent_answer_checks_reject_near_misses() {
     assert!(!passes("file-secret", "API_KEY 是 FIXTURE-SECRET-7731").await);
     assert!(passes("date-weekday", "答案:週六").await);
     assert!(!passes("date-weekday", "答案:星期五").await);
+}
+
+#[tokio::test]
+async fn rust_fix_rejects_the_unfixed_program_and_a_fix_that_uses_unsafe() {
+    // 負對照:原本的程式(題目裡那段)一定編譯不過;用 unsafe「修」也不算。少了這個,`compiles` 檢查壞掉
+    // (什麼都算通過)時,參考答案照樣全過。
+    let ds = load("rust-fix");
+    for case in &ds.cases {
+        let Input::Chat(chat) = &case.input else {
+            panic!("{}: rust-fix is chat only", case.id)
+        };
+        let Some(Content::Text { text, .. }) = chat.messages[0].content.first() else {
+            panic!("{}: no question text", case.id)
+        };
+        let scored = local_checks().score(case, &answer(text)).await;
+        assert_eq!(
+            scored.verdicts[0].result,
+            VerdictResult::Fail,
+            "{}: the unfixed program compiled",
+            case.id
+        );
+    }
+    let case = &ds.cases[0];
+    let cheat = "```rust\nfn main() { unsafe {} }\n```";
+    let scored = local_checks().score(case, &answer(cheat)).await;
+    let results: Vec<_> = scored.verdicts.iter().map(|v| v.result).collect();
+    assert_eq!(results, [VerdictResult::Pass, VerdictResult::Fail]);
 }

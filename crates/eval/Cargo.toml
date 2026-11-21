@@ -14,6 +14,8 @@ workspace = true
 llm = { path = "../llm" }
 # `Input::Agent`(003 design §9):每一題跑一次 agent loop,用 003 的內建工具。
 agent = { path = "../agent" }
+# `compiles` 檢查(003 第三部分):回答裡的程式碼在容器沙箱裡編譯。`[sandbox]` 的形狀也從這裡來(跟 agent.toml 一樣)。
+sandbox = { path = "../sandbox" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -818,6 +818,7 @@ dependencies = [
  "jiff",
  "llm",
  "regex",
+ "sandbox",
  "serde",
  "serde_json",
  "sha2",

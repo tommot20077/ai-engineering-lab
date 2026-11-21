@@ -14,6 +14,9 @@ use llm::{
 use super::*;
 use crate::store::DatasetInfo;
 
+/// 沒有沙箱的確定性檢查(這些測試沒有 `compiles`)。
+static OFFLINE: crate::score::Checks = crate::score::Checks::offline();
+
 /// 假的評審。看 prompt 決定怎麼回:回答裡有 `BAD` → 每條都不通過;有 `HANG` → 永遠不回;其他 → 每條都通過。
 /// 每次用掉 1000 個輸入、100 個輸出、300 個讀快取、50 個寫快取 token。
 struct FakeJudge {
@@ -214,6 +217,7 @@ fn setup_with<'a>(name: &'a str, judge: Option<&'a Judge>) -> ScoreSetup<'a> {
         name,
         judge,
         skip_on_check_failure: true,
+        checks: &OFFLINE,
     }
 }
 

@@ -234,6 +234,10 @@ pub enum Check {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         required: Vec<String>,
     },
+    /// 回答裡最後一個 ` ```rust ` 區塊能編譯(在沙箱裡 `rustc --edition 2024`,003 第三部分,P3-6)。
+    /// JSON 是 `{"type": "compiles"}`。寫成沒有欄位的 struct variant(`{}`)而不是 unit variant:
+    /// serde 對 unit variant 不套用 `deny_unknown_fields`,`{"type": "compiles", "edition": "2021"}` 會被默默接受(寫錯不會被發現)。
+    Compiles {},
 }
 
 /// 給人看的檢查描述,打分結果的 `criterion` 欄位就是它,例如 `contains "所有權"`。
@@ -247,6 +251,7 @@ impl fmt::Display for Check {
             Check::Regex { pattern } => write!(f, "regex /{pattern}/"),
             Check::Json { required } if required.is_empty() => write!(f, "json"),
             Check::Json { required } => write!(f, "json with fields {}", required.join(", ")),
+            Check::Compiles {} => write!(f, "compiles"),
         }
     }
 }

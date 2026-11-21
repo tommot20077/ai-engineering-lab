@@ -171,6 +171,21 @@ dockerd 不會自己常駐:每個雲端 session 要先在背景啟動(`dockerd`)
 - **說明裡的上限是設定的值**(`RunRust::new` 時組好):模型知道編譯、執行各有幾秒。
 - `RunPlan` 加 `allow_run`:存檔接續時一樣有 `run_rust`。
 
+## 7.6 實作筆記(第 6 步,2026-11-21)
+
+- **`Check::Compiles {}`**(JSON `{"type": "compiles"}`)。寫成沒有欄位的 struct variant:serde 對 internally tagged 的 unit variant
+  不套用 `deny_unknown_fields`,`{"type": "compiles", "edition": "2021"}` 會被默默接受(測試抓到的)。
+- **取最後一個 ` ```rust ` 區塊**:回答常先引用題目、最後才給修好的版本。語言標記第一個字是 `rust`(`rust,ignore` 也算、`rustc` 不算);
+  其他語言的區塊配對到收尾為止,裡面的字樣不算;沒收尾的不算。
+- **結果**:編譯成功 → 通過;沒有區塊、編譯失敗、逾時 → 沒通過(理由只放 rustc 第一行 `error…`,不放程式碼:回答是私有內容);
+  沒有沙箱、沙箱壞了 → 錯誤(不是模型的錯,修好可以重新打分)。
+- **`Checks` 帶一個 `Option<Arc<dyn Sandbox>>`**,經由 `ScoreSetup.checks` 交給打分流程;`eval score` 用 `[sandbox]`(eval.toml,形狀同 agent.toml)
+  建立 `ContainerSandbox`。資料集沒有 `compiles` 時不會碰到 docker。
+- **資料集**:新的 `evals/rust-fix.jsonl`(8 題),由 `rust-intermediate` 的 8 題編譯錯誤題改寫:「修好它、保持原本想做的事、不准 unsafe、
+  給完整程式」;檢查 `compiles` + `not_contains "unsafe"`,評分標準「保持原本的意圖」(擋掉「刪掉出問題的程式」這種修法)。
+  另開新檔而不是改 `rust-intermediate`:改了它的 hash 就變了,之前的執行不能再拿來比較。
+- **資料集測試用本機 rustc 的 `Sandbox`**(`LocalRustc`):只給自己寫的參考答案用(可信);負對照確認題目裡原本的程式編譯不過。
+
 ## 8. 不做
 
 - 通用 shell、網路存取、多檔專案(`cargo` + 外部 crate)、`runs`(執行比對輸出)。

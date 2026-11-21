@@ -14,6 +14,9 @@ use crate::store::DatasetInfo;
 
 use VerdictResult::{Fail, Pass};
 
+/// 沒有沙箱的確定性檢查(這些測試沒有 `compiles`)。
+static OFFLINE: crate::score::Checks = crate::score::Checks::offline();
+
 fn t(s: &str) -> jiff::Timestamp {
     s.parse().unwrap()
 }
@@ -654,6 +657,7 @@ mod load_from_disk {
             name: "checks",
             judge: None,
             skip_on_check_failure: true,
+            checks: &OFFLINE,
         };
         let options = ExecOptions {
             concurrency: 1,

@@ -65,6 +65,10 @@ fn answer(model: &str, question: &str) -> String {
         "let".into()
     } else if question.contains("capital of France") {
         "Paris".into()
+    } else if question.contains("compile-me-ok") {
+        "修好了:\n\n```rust\nfn main() {}\n```".into()
+    } else if question.contains("compile-me-broken") {
+        "```rust\nfn main() { BROKEN }\n```".into()
     } else {
         format!("an answer about: {question}")
     }
@@ -746,4 +750,87 @@ async fn calibrate_refuses_mistakes_before_calling_a_judge() {
     );
     assert_eq!(lab.calls().await, 0);
     assert!(!lab.dir.path().join("data/calibrations").exists());
+}
+
+/// 假的 docker(`[sandbox] program`):程式裡有 `BROKEN` 就編譯失敗;每次呼叫記在 `calls`(兩行同時寫也是整行 append)。
+const FAKE_DOCKER: &str = r#"#!/bin/sh
+echo "$*" >> '__DIR__/calls'
+case "$1" in
+  run) echo fake-container ;;
+  exec)
+    # 兩題同時打分:原始碼依容器名稱分開存。
+    if [ "$2" = "--interactive" ]; then cat > "__DIR__/$3.rs"; exit 0; fi
+    if [ "$3" = "rustc" ] && grep -q BROKEN "__DIR__/$2.rs"; then
+      echo "error[E0425]: cannot find value \`BROKEN\` in this scope" >&2; exit 1
+    fi ;;
+esac
+"#;
+
+#[tokio::test]
+async fn compiles_is_checked_in_the_configured_sandbox() {
+    use std::os::unix::fs::PermissionsExt;
+    let lab = Lab::start().await;
+    let docker = lab.dir.path().join("docker");
+    std::fs::write(
+        &docker,
+        FAKE_DOCKER.replace("__DIR__", lab.dir.path().to_str().unwrap()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // 平行的測試 fork 時可能短暫拿著寫檔的 fd(ETXTBSY):先試著執行到成功(同 sandbox 的 fake_docker.rs)。
+    while let Err(e) = std::process::Command::new(&docker).arg("probe").status() {
+        assert_eq!(e.raw_os_error(), Some(26), "{e}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::fs::remove_file(lab.dir.path().join("calls")).unwrap();
+    let config = lab.dir.path().join("eval.toml");
+    let with_sandbox = std::fs::read_to_string(&config).unwrap()
+        + &format!("[sandbox]\nprogram = \"{}\"\n", docker.display());
+    std::fs::write(&config, with_sandbox).unwrap();
+
+    let dataset = lab.dir.path().join("code.jsonl");
+    std::fs::write(
+        &dataset,
+        r#"{"id":"ok","input":{"type":"chat","max_tokens":64,"messages":[{"role":"user","content":[{"type":"text","text":"compile-me-ok"}]}]},"checks":[{"type":"compiles"}]}
+{"id":"broken","input":{"type":"chat","max_tokens":64,"messages":[{"role":"user","content":[{"type":"text","text":"compile-me-broken"}]}]},"checks":[{"type":"compiles"}]}
+"#,
+    )
+    .unwrap();
+    let run = run_dir(
+        &lab.ok(&[
+            "run",
+            "--dataset",
+            dataset.to_str().unwrap(),
+            "--model",
+            "cheap",
+        ])
+        .await,
+    );
+    let stdout = lab
+        .ok(&["score", run.to_str().unwrap(), "--no-judge"])
+        .await;
+    assert!(stdout.contains("pass 1, fail 1"), "{stdout}");
+    let scores = std::fs::read_to_string(run.join("scores/checks.jsonl")).unwrap();
+    assert!(
+        scores.contains(
+            "the code does not compile: error[E0425]: cannot find value `BROKEN` in this scope"
+        ),
+        "{scores}"
+    );
+    // 只編譯,不執行;每次都收掉容器。
+    let calls = std::fs::read_to_string(lab.dir.path().join("calls")).unwrap();
+    assert_eq!(
+        calls.lines().filter(|l| l.contains(" rustc ")).count(),
+        2,
+        "{calls}"
+    );
+    assert!(!calls.contains("/work/main\n"), "{calls}");
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|l| l.starts_with("rm --force "))
+            .count(),
+        2,
+        "{calls}"
+    );
 }

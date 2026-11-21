@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::Result;
 use eval::compare;
 use eval::run::{self, ExecOptions, RunConfig};
-use eval::score::{self, ScoreSetup};
+use eval::score::{self, Checks, ScoreSetup};
 use futures::future::BoxFuture;
 use jiff::Timestamp;
 use llm::{
@@ -110,11 +110,13 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    // 2. 打分:smoke 只有確定性檢查,不需要評審。
+    // 2. 打分:smoke 只有確定性檢查,不需要評審,也沒有 `compiles`(不需要沙箱)。
+    let checks = Checks::offline();
     let setup = ScoreSetup {
         name: "checks",
         judge: None,
         skip_on_check_failure: true,
+        checks: &checks,
     };
     for dir in [&a, &b] {
         score::score(dir.path(), &setup, options, Timestamp::now()).await?;

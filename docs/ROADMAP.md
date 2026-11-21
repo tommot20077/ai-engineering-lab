@@ -76,7 +76,8 @@
   - 第 3 步完成:`Root` 改用 cap-std(不跟隨任何 symlink)、`write_file`、`edit_file`、`--allow-write`、核准提示、`--yes`、軌跡記下核准。
   - 第 4 步完成:核准提示回答 `s` 存檔(結束碼 3)、`agent resume <run id>` 接續(設定或工具變了就拒絕、清單重新算、先認領再執行)。
   - 第 5 步完成:`run_rust`、`--allow-run`、`[sandbox]` 設定(形狀在 sandbox crate,eval 共用)。
-- **下一步**:003 第三部分第 6 步:eval 的 `compiles` 檢查;把編譯錯誤題改寫成「修好它、給完整程式」的新資料集。
+  - 第 6 步完成:eval 的 `compiles` 檢查(`[sandbox]` 共用 agent 的形狀)、新資料集 `rust-fix`(8 題)。
+- **下一步**:003 第三部分第 7 步:E2E、README、retro;CI 綠燈後 fast-forward 合併進 main。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理

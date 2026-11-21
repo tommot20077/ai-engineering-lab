@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use config_loader::ConfigFile;
 use llm::{DEFAULT_BASE_URL, RetryPolicy};
+use sandbox::{ContainerConfig, SandboxSection};
 use serde::Deserialize;
 
 use crate::run::Price;
@@ -36,6 +37,9 @@ pub struct RawConfig {
     pub paths: PathsSection,
     #[serde(default)]
     pub prices: BTreeMap<String, Price>,
+    /// `compiles` 檢查用的沙箱(003 第三部分)。形狀跟 agent.toml 的 `[sandbox]` 一樣(定義在 sandbox crate)。
+    #[serde(default)]
+    pub sandbox: SandboxSection,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -118,6 +122,8 @@ pub struct Settings {
     /// gateway 的呼叫紀錄目錄(一天一個 JSONL 檔)。
     pub records_dir: PathBuf,
     pub retry: RetryPolicy,
+    /// `compiles` 用的沙箱(檢查過)。資料集沒有 `compiles` 時用不到,但設定錯了在啟動時就說。
+    pub sandbox: ContainerConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,30 +269,46 @@ impl Settings {
             .map_err(|e| problems.push(format!("paths.datasets: {e}")))
             .ok();
 
-        // 只有「沒有任何問題」時,上面那些 Option 才一定都是 Some;寫在同一個 match 裡就不需要 unwrap(同 gateway)。
-        match (base_url, data_dir, public_datasets, records_dir) {
-            (Some(base_url), Some(data_dir), Some(public_datasets), Some(records_dir))
-                if problems.is_empty() =>
-            {
-                Ok(Self {
-                    aliases: raw.aliases.clone(),
-                    base_url,
-                    judge: JudgeSettings {
-                        alias: raw.judge.alias.clone(),
-                        effort: raw.judge.effort.clone(),
-                        skip_on_check_failure: raw.judge.skip_on_check_failure,
-                    },
-                    concurrency: raw.run.concurrency,
-                    timeout: Duration::from_secs(raw.run.timeout_secs),
-                    prices: raw.prices.clone(),
-                    runs_dir: data_dir.join("runs"),
-                    calibrations_dir: data_dir.join("calibrations"),
-                    private_datasets: data_dir.join("datasets"),
-                    public_datasets,
-                    records_dir,
-                    retry: RetryPolicy::default(),
-                })
+        // `program` 有 `/` 的話是路徑,相對於設定檔(同 agent.toml)。
+        let mut section = raw.sandbox.clone();
+        if section.program.contains('/') {
+            match file.resolve(&section.program) {
+                Ok(path) => section.program = path.to_string_lossy().into_owned(),
+                Err(e) => problems.push(format!("sandbox.program: {e}")),
             }
+        }
+        let sandbox = section
+            .to_config()
+            .map_err(|e| problems.push(e.to_string()))
+            .ok();
+
+        // 只有「沒有任何問題」時,上面那些 Option 才一定都是 Some;寫在同一個 match 裡就不需要 unwrap(同 gateway)。
+        match (base_url, data_dir, public_datasets, records_dir, sandbox) {
+            (
+                Some(base_url),
+                Some(data_dir),
+                Some(public_datasets),
+                Some(records_dir),
+                Some(sandbox),
+            ) if problems.is_empty() => Ok(Self {
+                aliases: raw.aliases.clone(),
+                base_url,
+                judge: JudgeSettings {
+                    alias: raw.judge.alias.clone(),
+                    effort: raw.judge.effort.clone(),
+                    skip_on_check_failure: raw.judge.skip_on_check_failure,
+                },
+                concurrency: raw.run.concurrency,
+                timeout: Duration::from_secs(raw.run.timeout_secs),
+                prices: raw.prices.clone(),
+                runs_dir: data_dir.join("runs"),
+                calibrations_dir: data_dir.join("calibrations"),
+                private_datasets: data_dir.join("datasets"),
+                public_datasets,
+                records_dir,
+                retry: RetryPolicy::default(),
+                sandbox,
+            }),
             _ => Err(InvalidConfig(problems)),
         }
     }
