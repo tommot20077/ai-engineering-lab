@@ -476,10 +476,8 @@ pub(crate) fn printable(bytes: &[u8]) -> String {
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let trimmed = cleaned.trim();
-    let mut end = trimmed.len().min(DETAIL_BYTES);
-    while !trimmed.is_char_boundary(end) {
-        end -= 1;
-    }
+    // 不超過上限的最後一個字元邊界:直接切在 1024 可能切在中文字中間(Rust 的字串一定是合法 UTF-8,切錯會 panic)。
+    let end = trimmed.floor_char_boundary(DETAIL_BYTES);
     trimmed.get(..end).unwrap_or_default().to_owned()
 }
 

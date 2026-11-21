@@ -321,17 +321,29 @@ async fn an_infinite_loop_is_stopped_at_the_time_limit() {
 
 #[tokio::test]
 async fn a_slow_compile_is_stopped_at_the_compile_limit() {
+    // 編譯本身就停不下來:常數在**編譯時**計算,迴圈要跑 2^64 次。`long_running_const_eval` 預設會擋下這種程式,
+    // 允許它之後 rustc 就一直算下去,只能靠我們的上限停住。
+    // (原本用「上限 0.1 秒編譯 `fn main() {}`」,在 CI 的機器上 0.1 秒內就編譯完了:測試的前提不能依賴機器快慢。)
     let Some(d) = docker(Limits {
-        compile_timeout: Duration::from_millis(100),
+        compile_timeout: Duration::from_secs(2),
         ..Limits::default()
     })
     .await
     else {
         return;
     };
-    let report = d.run("fn main() {}").await;
+    let source = r#"#![allow(long_running_const_eval)]
+        const SPIN: u64 = { let mut i: u64 = 0; while i < u64::MAX { i += 1; } i };
+        fn main() { println!("{SPIN}"); }"#;
+    let started = Instant::now();
+    let report = d.run(source).await;
     assert!(report.compile.timed_out, "{report:?}");
-    assert_eq!(report.run, None);
+    assert_eq!((report.compile.exit_code, report.run), (None, None));
+    assert!(
+        started.elapsed() < Duration::from_secs(15),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[tokio::test]

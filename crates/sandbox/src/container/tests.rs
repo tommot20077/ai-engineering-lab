@@ -36,10 +36,13 @@ fn every_way_of_writing_a_pinned_image_is_accepted() {
         format!("rust:1.99.1-slim@{DIGEST}"),
         format!("registry.example.com:5000/team/rust:1.99.1@{DIGEST}"),
     ] {
-        assert!(
-            ContainerSandbox::new(config_with(&image, Limits::default())).is_ok(),
-            "{image}"
-        );
+        let limits = Limits {
+            pids: 7,
+            ..Limits::default()
+        };
+        let sandbox = ContainerSandbox::new(config_with(&image, limits.clone())).unwrap();
+        // 設定原樣保留(不是換成預設值)。
+        assert_eq!(sandbox.config(), &config_with(&image, limits));
     }
 }
 
@@ -233,10 +236,15 @@ fn printable_replaces_control_characters_and_trims() {
 
 #[test]
 fn printable_keeps_at_most_1024_bytes_on_a_char_boundary() {
-    let long = "é".repeat(600); // 1200 bytes
+    let long = "é".repeat(600); // 1200 bytes,第 1024 個位元組剛好是邊界
     let out = printable(long.as_bytes());
     assert_eq!(out.len(), 1024);
     assert!(out.chars().all(|c| c == 'é'));
+    // 前面多一個 a:第 1024 個位元組落在 é 的中間,要退到 1023。
+    let shifted = format!("a{long}");
+    let out = printable(shifted.as_bytes());
+    assert_eq!(out.len(), 1023);
+    assert!(out.starts_with("aé") && out.ends_with('é'));
 }
 
 // ---- 不必啟動容器就能判斷的情況 ----
