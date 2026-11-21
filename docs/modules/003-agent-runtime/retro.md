@@ -168,3 +168,89 @@
 4. 規格改版的那一天:設計照記憶寫了 `initialize`,實作前讀規格發現已經沒有了。
 5. 用現成的 JSON Schema 驗證器,也要讀它的預設值:ReDoS 與外部 `$ref`。
 6. 同一組測試跑兩種傳輸,以及讓 mutation 測得出時序的「更真的」測試 server。
+
+# 第三部分:沙箱與有副作用的工具
+
+> 2026-11-21 完成(第 1~7 步)。設計見 [`design-part3.md`](design-part3.md)(D-053 ~ D-059,每一步的實作筆記在 §7.1~7.6),
+> 使用說明見 [`crates/sandbox/README.md`](../../../crates/sandbox/README.md)、agent README 的「內建工具」「核准」「存檔」、eval README 的 `compiles`。
+
+## 1. 做出了什麼
+
+- `crates/sandbox`:`Sandbox` trait、`ContainerSandbox`(一次一個容器,四步:啟動、寫入原始碼、編譯、執行,`rm --force` 收尾)、
+  `SandboxSection`(`[sandbox]` 設定的形狀,agent 與 eval 共用)、`examples/run_rust.rs`。
+- `crates/agent`:核准的狀態機(`RunEvent::NeedsApproval`、`resolve`、`ApprovalPolicy`)、`Root` 改用 cap-std、`write_file`、`edit_file`、
+  `run_rust`、`--allow-write`、`--allow-run`、`--yes`、核准提示(`s` 存檔)、`agent resume <run id>`。
+- `crates/eval`:`compiles` 檢查、新資料集 `evals/rust-fix.jsonl`(8 題)。
+- 測試:整個 workspace 817 個。第三部分新增的包括:對**真的容器**的逃逸測試 14 個、假 docker 的流程測試 13 個、
+  新的 E2E 17 個(寫檔 / 核准 / 存檔接續 11、`run_rust` 5、eval 的 `compiles` 1),都在 CI 上跑(`SANDBOX_DOCKER=1`)。
+
+## 2. 學到的 Rust 概念(依步驟,附 Java 對照)
+
+| 步驟 | 概念 | Java 對照 / 重點 |
+|---|---|---|
+| 1 | `tokio::process` + 主機計時 + `kill_on_drop` | `ProcessBuilder` + `waitFor(timeout)`;但殺掉 `docker` client 不會殺掉容器裡的行程,要 `docker rm --force` |
+| 1 | 緩衝區放在 future 外面,逾時後還拿得到已讀的部分 | 把 `StringBuilder` 交給另一個執行緒;Rust 由 compiler 保證 future 被 drop 之後才能再碰它 |
+| 1 | RAII 守衛在 future 被取消時收掉容器 | try-with-resources;但 `CompletableFuture.cancel()` 不會執行 finally,Rust 的 drop 一定會跑 |
+| 1 | `floor_char_boundary` | `String` 一定是合法 UTF-8,切在字元中間會 panic |
+| 2 | enum 狀態(`Turn::Done` / `Turn::Wait`)、`Option::take()` | sealed interface + switch;`take()` 是「把值搬出來、原地留 None」,Java 不追蹤擁有權所以沒有對應 |
+| 2 | trait 的預設方法回傳 `impl Future` | `default` 介面方法;`async { None }` 不借用任何東西,自然是 `Send` |
+| 3 | capability-based API(`Dir` handle,`openat`) | `Path.resolve()` + `toRealPath()` + `startsWith()` 是「先檢查再開檔」,中間有空隙;Java 標準庫沒有 handle 版本 |
+| 3 | `Arc<Dir>` | `Dir` 不能 `Clone`(複製 handle 要 `dup`,會失敗);共用就包 `Arc` |
+| 3 | 暫存檔 + `rename` + `sync_all` | `Files.move(ATOMIC_MOVE)`;覆寫時把原本的權限套到暫存檔上 |
+| 4 | serde 序列化執行狀態、`version` 欄位、`deny_unknown_fields` | Jackson + `FAIL_ON_UNKNOWN_PROPERTIES`;版本不對就拒絕,不猜怎麼轉換 |
+| 4 | `Box<SavedRun>` 讓 enum 變小 | enum 的大小是最大的 variant;裝箱之後只剩一個指標 |
+| 5 | `Arc<dyn Sandbox>` 交給工具 | 欄位型別是介面;Rust 要寫出「指向某個實作」(`dyn`)與「誰擁有」(`Arc`) |
+| 6 | `const fn` + `static` 借出 `&'static` | 型別有 `Drop`(`Arc`)時 `&CONST` 不會被提升成 `'static`,要放進 `static` |
+| 6 | serde 對 internally tagged 的 **unit** variant 不套用 `deny_unknown_fields` | 改成 `Compiles {}`;測試先抓到才知道 |
+
+## 3. 架構決策(詳見 ROADMAP 決策表)
+
+- D-053 範圍:`write_file`、`edit_file`、`run_rust`、`compiles`;不做通用 shell。單檔 Rust 讓攻擊面可控,eval 與 agent 用同一個沙箱。
+- D-054 容器:14 個逃逸測試對真的容器跑,**每個隔離參數都用 mutation 拿掉過一次**,確認有一個逃逸測試會失敗(只有 `--memory-swap`
+  在沒有 swap 的機器上看不出差別)。
+- D-055 cap-std:**連指向裡面的 symlink 也不跟隨**(第一部分允許)。規則越簡單越不容易錯。
+- D-056 / D-057 兩層開關 + 狀態機:狀態機排在寫檔工具之前,沒有任何一個 commit 讓寫檔工具在「沒有核准機制」時就能用。
+- D-058 `write_file` + `edit_file`:`edit_file` 的「剛好一次」算重疊,核准之後執行時重新讀檔、重新找。
+- **D-059**(實作時定的):`[sandbox]` 的形狀放在 sandbox crate、兩個設定檔共用;沙箱不自動下載 image;存檔的結束碼 3;
+  `compiles` 的「沙箱壞了」是錯誤不是沒通過。
+
+## 4. 第一次真的跑:`rust-fix`,兩個模型都 8/8
+
+`rust-fix`(把 `rust-intermediate` 的 8 題編譯錯誤題改寫成「修好它、給完整程式」),Haiku 5.5 對 Sonnet 5.5,評審 Sonnet。
+
+- **第一輪**:兩個模型都 7/8,而且錯在同一題 `fix-assign-borrowed`:原本的程式是 `let r = &x; x = 6; println!("{r} {x}")`,
+  兩個模型都修成印出 `6 6`(Sonnet 用 `Cell`),參考答案印 `5 6`。評審判兩個都沒保持原意。
+  但原本的程式**根本編譯不過**,「原本想印什麼」有兩種讀法(`r` 是 `x` 的參考,`6 6` 說得通)——**是題目有歧義,不是模型錯**。
+- **修題目**:每一題都寫明「執行要印出什麼」;加一個資料集測試,把參考答案真的編譯、執行,輸出要跟題目寫的一樣。
+- **第二輪**:兩個都 8/8(`compiles`、不准 `unsafe`、評審全過)→ **天花板**,這份資料集分不出兩個模型。32 次編譯都在容器裡跑。
+- 兩輪合計花 **$0.17**(Haiku 每題 $0.0036、Sonnet $0.0067,含評審)。
+
+## 5. 學到的教訓
+
+1. **測試的前提不能依賴機器快慢**:「0.1 秒的編譯上限一定會逾時」在雲端開發機成立,在 GitHub 的 runner 不成立(第 1 步 CI 失敗)。
+   改成「編譯本身停不下來」(在編譯時算一個 2^64 次的迴圈)。
+2. **`next()` 不讓出執行緒時,tokio 的逾時插不進來**:讓 `resolve` 什麼都不做的 mutant,會讓「拉到結束」的迴圈永遠停在等核准;
+   CI 上 5 個 mutant 各卡 300 秒。修法:測試用數步數的 `drain()`、`Agent::run` 問完還有人在等就停。逾時算「抓到」,但很貴,值得修。
+3. **看不出差別的隔離參數,要找看得出差別的觀察點**:不是 root 時 CapEff 本來就是 0,`--cap-drop ALL` 拿掉也一樣;要看 CapBnd。
+   `TMPDIR` 對 rustc 沒差,但對程式的 `temp_dir()` 有差。mutation 把這兩個都找出來了。
+4. **平行測試寫出可執行檔再執行,會撞到 ETXTBSY**:另一個執行緒剛好 fork 時,子行程短暫拿著寫檔的 fd。先試著執行到成功再用。
+5. **測試自己的算術也會錯**:三次把「`- 買牛奶\n` 幾個 bytes」算錯(中文一個字 3 bytes)。都是改測試,不是改產品;但每次都要確認是哪一邊錯。
+6. **資料集也會有 bug,真的跑才看得到**:兩個模型錯在同一題、理由一樣,先懷疑題目。
+7. **磁碟會滿**:`target/` 長到 28 GB、check.sh 在連結時 SIGBUS;刪掉 `target/debug` 重跑。check.sh 的結果一律存檔、看結束碼。
+
+## 6. 還沒做 / 下一步要帶走的
+
+- Podman 與 Mac 的 Docker Desktop 沒有實測(CLI 參數相容,但 tmpfs 的 `uid=` 選項、image 的短名稱解析可能不同)。
+- `runs` 檢查(執行並比對輸出):`rust-fix` 的題目已經寫明要印什麼,沙箱也能執行,加一個 `Check` variant 就有。
+- MCP 工具目前一律不需要核准:server 給的 `readOnlyHint` 是不可信的;要不要讓設定檔指定「這個 server 的工具要核准」,等真的接上會寫入的 server 再決定。
+- 分支累積的 Mutants (diff) 越來越久(第三部分一次 push 就是 sandbox + agent + eval);合併進 main 後基準點重設。
+
+## 7. 文章大綱
+
+1. 編譯也是執行:為什麼「只是編譯一下」也需要沙箱(`include_str!` 讀主機檔案)。
+2. 用 docker 做沙箱的每一個參數,以及怎麼證明每一個都有用(逃逸測試 + 一次拿掉一個參數)。
+3. 逾時要由誰判斷:容器裡的 `timeout` 跟不可信的程式是同一個使用者。
+4. 「先檢查路徑再開檔」的空隙,以及 capability-based 的檔案 API。
+5. 核准是一個狀態機:停下來、存檔、幾小時後在另一個行程接續,而且同一個核准不會被執行兩次。
+6. 給模型的文字印到終端機之前:控制序列與改變文字方向的 Unicode。
+7. 兩個模型錯在同一題時,先懷疑題目。

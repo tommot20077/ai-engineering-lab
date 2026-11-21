@@ -585,3 +585,64 @@ async fn rust_fix_rejects_the_unfixed_program_and_a_fix_that_uses_unsafe() {
     let results: Vec<_> = scored.verdicts.iter().map(|v| v.result).collect();
     assert_eq!(results, [VerdictResult::Pass, VerdictResult::Fail]);
 }
+
+#[test]
+fn rust_fix_references_print_what_the_question_asks_for() {
+    // 題目寫明「要印出什麼」(第一次真的跑時發現:原本的程式編譯不過,「原本想印什麼」有兩種讀法)。
+    // 參考答案真的編譯、執行一次,輸出要跟題目寫的一樣,不然評審拿到的是錯的標準。
+    let ds = load("rust-fix");
+    let tmp = tempfile::tempdir().unwrap();
+    let fence = regex::Regex::new(r"(?s)```text\n(.*?)\n```").unwrap();
+    let code = regex::Regex::new(r"(?s)```rust\n(.*?)```").unwrap();
+    for case in &ds.cases {
+        let Input::Chat(chat) = &case.input else {
+            panic!("{}: rust-fix is chat only", case.id)
+        };
+        let Some(Content::Text { text, .. }) = chat.messages[0].content.first() else {
+            panic!("{}: no question text", case.id)
+        };
+        let expected = match fence.captures(text) {
+            Some(c) => c.get(1).unwrap().as_str().to_owned(),
+            None => {
+                assert!(
+                    text.contains("不印任何東西"),
+                    "{}: no expected output",
+                    case.id
+                );
+                String::new()
+            }
+        };
+        let reference = case.reference.as_deref().unwrap();
+        let program = code
+            .captures_iter(reference)
+            .last()
+            .unwrap()
+            .get(1)
+            .unwrap()
+            .as_str();
+        let src = tmp.path().join(format!("{}.rs", case.id));
+        let exe = tmp.path().join(&case.id);
+        std::fs::write(&src, program).unwrap();
+        let build = Command::new("rustc")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args(["--edition", "2024", "--crate-name", "fix", "-o"])
+            .arg(&exe)
+            .arg(&src)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "{}: {}",
+            case.id,
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let run = Command::new(&exe).output().unwrap();
+        assert!(run.status.success(), "{}", case.id);
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout).trim_end(),
+            expected,
+            "{}",
+            case.id
+        );
+    }
+}

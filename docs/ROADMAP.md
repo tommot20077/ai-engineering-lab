@@ -70,14 +70,11 @@
 - **live 測試通過**(2026-11-21):對官方參考 server `@modelcontextprotocol/server-everything` 2.3.0,stdio 與 HTTP 都過;
   22 個工具沒有一個被拒絕,`x-mcp-header` 的 base64 header 被參考 server 接受。
 - **003 第三部分(沙箱與有副作用的工具)**:設計已定案 `docs/modules/003-agent-runtime/design-part3.md`(2026-11-21,使用者逐一確認,D-053~D-058)。
-- **003 第三部分進度**(使用者交代 2026-11-21:7 步一路做完再一起看):
-  - 第 1 步完成:`crates/sandbox`(`Sandbox` trait、`ContainerSandbox`、假 docker 的流程測試、對真容器的 14 個逃逸測試;CI 設 `SANDBOX_DOCKER=1`)。
-  - 第 2 步完成:核准的狀態機(`RunEvent::NeedsApproval`、`resolve`、`ApprovalPolicy`、工具的 `needs_approval` / `describe`;等待時間不算)。
-  - 第 3 步完成:`Root` 改用 cap-std(不跟隨任何 symlink)、`write_file`、`edit_file`、`--allow-write`、核准提示、`--yes`、軌跡記下核准。
-  - 第 4 步完成:核准提示回答 `s` 存檔(結束碼 3)、`agent resume <run id>` 接續(設定或工具變了就拒絕、清單重新算、先認領再執行)。
-  - 第 5 步完成:`run_rust`、`--allow-run`、`[sandbox]` 設定(形狀在 sandbox crate,eval 共用)。
-  - 第 6 步完成:eval 的 `compiles` 檢查(`[sandbox]` 共用 agent 的形狀)、新資料集 `rust-fix`(8 題)。
-- **下一步**:003 第三部分第 7 步:E2E、README、retro;CI 綠燈後 fast-forward 合併進 main。
+- **003 第三部分(沙箱與有副作用的工具)完成**(2026-11-21,第 1~7 步),回顧見 `retro.md` 的第三部分。
+  內容:`crates/sandbox`(容器沙箱、14 個對真容器的逃逸測試)、核准的狀態機、`Root` 改用 cap-std(不跟隨任何 symlink)、
+  `write_file` / `edit_file` / `run_rust`、`--allow-write` / `--allow-run` / `--yes`、核准提示與 `s` 存檔、`agent resume`、
+  eval 的 `compiles` 與新資料集 `rust-fix`。第一次真的跑:Haiku、Sonnet 都 8/8(第一輪兩個都錯在同一題,是題目有歧義,已修),花 $0.17。
+- **下一步**:003 完成(三個部分)。接下來的模組依「模組規劃」;待使用者看過 003 的成果再決定。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -146,6 +143,7 @@
 | D-056 | 有副作用的工具:`--allow-write`、`--allow-run` 打開才註冊;打開後每次呼叫都要核准,`--yes` 才不問;eval 一律不問 | 兩層:給不給模型這個能力、每次要不要過目;預設最安全 | 2026-11-21 |
 | D-057 | 核准用狀態機(`Run::next()` 回傳「需要核准」、呼叫端回答後接續),暫停的狀態可以存檔,`agent resume <run-id>` 接續;等待核准的時間不算進總時間 | 核准可以晚一點才給、中間程式重開也沒關係;D-042 當時說「有人工核准的工具再做狀態機」,這次就是那個時候 | 2026-11-21 |
 | D-058 | 寫檔:`write_file`(新建或整份覆寫)+ `edit_file`(`old` 剛好出現一次才取代);暫存檔 + rename;核准時顯示具體變更 | 更新是常見需求;整份重寫貴又容易誤改;「剛好一次」擋掉改錯位置 | 2026-11-21 |
+| D-059 | 第三部分實作時定的:`[sandbox]` 的形狀放在 sandbox crate(`SandboxSection`),agent.toml 與 eval.toml 共用;沙箱不自動下載 image(`--pull never`,錯誤附上 `docker pull`);存檔之後結束碼 3;`compiles` 遇到沙箱本身不能用是「錯誤」不是「沒通過」;檔案工具連指向根目錄裡面的 symlink 也不跟隨 | 設定只寫一次;1 GB 的下載不該在工具呼叫裡默默發生;結束碼分得出「在等核准」;環境問題不能算模型答錯(修好可以重打分);規則越簡單越不容易錯 | 2026-11-21 |
 
 ## 模組
 
@@ -155,7 +153,7 @@
 |---|---|---|---|
 | 001 | LLM Gateway(`crates/llm` + `crates/gateway`,含呼叫紀錄) | Rust 服務 | 完成(第一部分 1~9、第二部分 10~19;回顧見 `retro.md`) |
 | 002 | Eval Harness(用助理的真實案例累積測試集) | Rust 服務 | 完成:第一部分(第 1~11 步,第一次真的比較)、第二部分(資料集與評審校準,第二次比較);回顧見 `retro.md` |
-| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 第一部分完成(loop + 內建工具,第 1~7 步);第二部分完成(MCP client,第 1~6 步);回顧見 `retro.md`;第三部分沙箱進行中(D-041) |
+| 003 | Agent runtime + Tool calling + MCP | Rust 服務 | 第一部分完成(loop + 內建工具,第 1~7 步);第二部分完成(MCP client,第 1~6 步);第三部分完成(沙箱與有副作用的工具,第 1~7 步);回顧見 `retro.md` |
 | 004 | 檢索引擎(BM25 / HNSW 從零)+ RAG | Rust 服務 | — |
 | 005 | 個人助理應用(把 001~004 組起來,開始每天用) | 應用 | — |
 
