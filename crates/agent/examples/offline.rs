@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use agent::tools::{Calculator, CurrentTime};
-use agent::{Agent, AgentConfig, Clock, ErasedTool, Outcome, Toolbox};
+use agent::{Agent, AgentConfig, Clock, ErasedTool, Outcome, RunEvent, Toolbox};
 use futures::future::BoxFuture;
 use llm::{
     Content, EventStream, LlmError, LlmProvider, ProviderMetadata, Request, Response, StopKind,
@@ -98,7 +98,8 @@ async fn main() -> anyhow::Result<()> {
 
     println!("任務:1234 乘 5678 是多少?");
     let mut run = agent.start("1234 乘 5678 是多少?");
-    while let Some(step) = run.next().await {
+    // 這兩個工具沒有副作用,不會停下來等核准(`RunEvent::NeedsApproval`);有的話見 README「核准」。
+    while let Some(RunEvent::Step(step)) = run.next().await {
         for call in &step.tool_calls {
             println!(
                 "第 {} 輪:呼叫 {} {} → {}",

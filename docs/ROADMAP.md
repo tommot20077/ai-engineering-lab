@@ -72,7 +72,8 @@
 - **003 第三部分(沙箱與有副作用的工具)**:設計已定案 `docs/modules/003-agent-runtime/design-part3.md`(2026-11-21,使用者逐一確認,D-053~D-058)。
 - **003 第三部分進度**(使用者交代 2026-11-21:7 步一路做完再一起看):
   - 第 1 步完成:`crates/sandbox`(`Sandbox` trait、`ContainerSandbox`、假 docker 的流程測試、對真容器的 14 個逃逸測試;CI 設 `SANDBOX_DOCKER=1`)。
-- **下一步**:003 第三部分第 2 步:核准的狀態機(`NeedsApproval`、`resolve`、工具的「要做什麼」說明)。
+  - 第 2 步完成:核准的狀態機(`RunEvent::NeedsApproval`、`resolve`、`ApprovalPolicy`、工具的 `needs_approval` / `describe`;等待時間不算)。
+- **下一步**:003 第三部分第 3 步:`Root` 改用 cap-std;`write_file`、`edit_file`;`--allow-write`、核准提示、`--yes`。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理

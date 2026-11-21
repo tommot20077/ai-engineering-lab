@@ -15,7 +15,7 @@ pub mod trajectory;
 pub use limits::AgentLimits;
 pub use prompt::DEFAULT_SYSTEM;
 pub use run::{
-    Agent, AgentConfig, AgentFailure, ConfigError, Finished, Limit, Outcome, Run, Step,
-    ToolCallRecord,
+    Agent, AgentConfig, AgentFailure, Approval, ApprovalPolicy, ConfigError, DENIED, Decision,
+    Finished, Limit, Outcome, ResolveError, Run, RunEvent, Step, ToolCallRecord,
 };
 pub use tool::{Clock, ErasedTool, Tool, ToolContext, ToolError, Toolbox, ToolboxError};

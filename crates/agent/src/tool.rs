@@ -29,6 +29,24 @@ pub trait Tool: Send + Sync {
         args: Self::Args,
         ctx: &ToolContext,
     ) -> impl Future<Output = Result<String, ToolError>> + Send;
+
+    /// 有副作用嗎(寫檔、執行程式)?有的話,每次呼叫之前都要核准(D-056)。預設沒有。
+    /// Java 對照:介面的 `default` 方法;沒有副作用的工具什麼都不用寫。
+    fn needs_approval(&self) -> bool {
+        false
+    }
+
+    /// 給核准的人看:這次呼叫**會做什麼**(例如「覆寫 notes.md,1.2 KB」、改前改後的那一段)。
+    /// 只對 `needs_approval` 的工具呼叫。`None`:直接顯示原始參數。
+    // 預設實作也可以回傳 `impl Future`:`async { None }` 是一個什麼都不借用的 future,自然是 `Send`。
+    fn describe(
+        &self,
+        args: &Self::Args,
+        ctx: &ToolContext,
+    ) -> impl Future<Output = Option<String>> + Send {
+        let _ = (args, ctx);
+        async { None }
+    }
 }
 
 /// 抹除型別的工具:參數是模型給的原始 JSON 字串,可以放進 `Vec<Box<dyn ErasedTool>>`。
@@ -42,6 +60,21 @@ pub trait ErasedTool: Send + Sync {
         args_json: &'a str,
         ctx: &'a ToolContext,
     ) -> BoxFuture<'a, Result<String, ToolError>>;
+
+    /// 同 `Tool::needs_approval`。
+    fn needs_approval(&self) -> bool {
+        false
+    }
+
+    /// 同 `Tool::describe`,參數是原始 JSON。一定有內容:說明不出來時就是原始參數(核准的人至少看得到模型要什麼)。
+    fn describe_json<'a>(
+        &'a self,
+        args_json: &'a str,
+        ctx: &'a ToolContext,
+    ) -> BoxFuture<'a, String> {
+        let _ = ctx;
+        Box::pin(async move { args_json.to_owned() })
+    }
 }
 
 // blanket impl:「每一個 `Tool` 都是 `ErasedTool`」,一次寫完,不必每個工具各寫一份。
@@ -69,6 +102,27 @@ impl<T: Tool> ErasedTool for T {
         Box::pin(async move {
             let args = parse_args::<T::Args>(args_json)?;
             self.call(args, ctx).await
+        })
+    }
+
+    fn needs_approval(&self) -> bool {
+        Tool::needs_approval(self)
+    }
+
+    fn describe_json<'a>(
+        &'a self,
+        args_json: &'a str,
+        ctx: &'a ToolContext,
+    ) -> BoxFuture<'a, String> {
+        Box::pin(async move {
+            // 參數不合法:工具不會被執行(call_json 會回 InvalidArgs),但還是讓人看到模型送了什麼。
+            match parse_args::<T::Args>(args_json) {
+                Ok(args) => self
+                    .describe(&args, ctx)
+                    .await
+                    .unwrap_or_else(|| args_json.to_owned()),
+                Err(e) => format!("{e}\narguments: {args_json}"),
+            }
         })
     }
 }
@@ -210,11 +264,26 @@ impl Toolbox {
         ctx: &ToolContext,
     ) -> Result<String, ToolError> {
         let entry = self
-            .entries
-            .iter()
-            .find(|e| e.def.name == name)
+            .find(name)
             .ok_or_else(|| ToolError::UnknownTool(name.to_owned()))?;
         entry.tool.call_json(args_json, ctx).await
+    }
+
+    /// 這個名稱的工具要不要核准。不存在的工具不用(呼叫會直接回 `UnknownTool`,什麼都不會發生)。
+    pub fn needs_approval(&self, name: &str) -> bool {
+        self.find(name).is_some_and(|e| e.tool.needs_approval())
+    }
+
+    /// 給核准的人看的說明。不存在的工具回原始參數。
+    pub async fn describe(&self, name: &str, args_json: &str, ctx: &ToolContext) -> String {
+        match self.find(name) {
+            Some(entry) => entry.tool.describe_json(args_json, ctx).await,
+            None => args_json.to_owned(),
+        }
+    }
+
+    fn find(&self, name: &str) -> Option<&Entry> {
+        self.entries.iter().find(|e| e.def.name == name)
     }
 }
 

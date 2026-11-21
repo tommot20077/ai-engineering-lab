@@ -6,7 +6,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agent::tools::{Calculator, CurrentTime, ListDir, ReadFile, Root};
-use agent::{Agent, AgentConfig, AgentFailure, AgentLimits, Clock, ErasedTool, Outcome, Toolbox};
+use agent::{
+    Agent, AgentConfig, AgentFailure, AgentLimits, ApprovalPolicy, Clock, ErasedTool, Outcome,
+    Toolbox,
+};
 use llm::{LlmProvider, ProviderMetadata};
 
 use crate::case::{AgentInput, AgentOutput};
@@ -78,6 +81,8 @@ pub async fn run(
         limits: limits(input),
         clock: input.now.map_or(Clock::System, Clock::Fixed),
         provider_options: ProviderMetadata::default(),
+        // eval 一律不問(D-056):沒有人在旁邊,題目要的工具本來就該執行。
+        approval: ApprovalPolicy::AutoApprove,
     };
     let agent = Agent::new(provider, Arc::new(toolbox), config)
         .map_err(|e| AgentRunError::Setup(e.to_string()))?;

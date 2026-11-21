@@ -1,6 +1,6 @@
 //! agent loop(design §5、D-042):呼叫模型 → 執行工具 → 結果接回去 → 再呼叫,直到模型回答或撞到護欄。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,6 +29,17 @@ pub struct AgentConfig {
     pub clock: Clock,
     /// 各家專屬的設定(例如 effort),原樣放進每一輪的請求。
     pub provider_options: ProviderMetadata,
+    /// 有副作用的工具要不要先問人(D-056)。
+    pub approval: ApprovalPolicy,
+}
+
+/// 有副作用的工具(`Tool::needs_approval`)執行之前要不要停下來問。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalPolicy {
+    /// 停下來:`next()` 回傳 `RunEvent::NeedsApproval`,呼叫端 `resolve()` 之後才繼續。預設。
+    Ask,
+    /// 不問,直接執行(CLI 的 `--yes`、eval)。
+    AutoApprove,
 }
 
 impl AgentConfig {
@@ -40,6 +51,7 @@ impl AgentConfig {
             limits: AgentLimits::default(),
             clock: Clock::System,
             provider_options: ProviderMetadata::default(),
+            approval: ApprovalPolicy::Ask,
         }
     }
 }
@@ -118,15 +130,29 @@ impl<'p> Agent<'p> {
             usage: Usage::default(),
             tool_calls: 0,
             call_ids: HashSet::new(),
-            started: Instant::now(),
+            used: Duration::ZERO,
+            since: Instant::now(),
+            waiting: None,
             outcome: None,
         }
     }
 
     /// 一次跑完,不需要一步一步看的時候用。
+    ///
+    /// 沒有人可以問:`ApprovalPolicy::Ask` 時,要核准的呼叫**全部拒絕**(fail-closed),模型會收到「使用者拒絕」。
+    /// 要讓它們執行就用 `ApprovalPolicy::AutoApprove`(eval 就是這樣)。
     pub async fn run(&self, task: impl Into<String>) -> Finished {
         let mut run = self.start(task);
-        while run.next().await.is_some() {}
+        while let Some(event) = run.next().await {
+            if let RunEvent::NeedsApproval(pending) = event {
+                let deny_all = pending
+                    .into_iter()
+                    .map(|a| (a.call_id, Decision::Deny))
+                    .collect();
+                // 剛剛才拿到的清單,一定對得上;萬一對不上,`next()` 會再問一次,不會執行任何東西。
+                let _ = run.resolve(deny_all);
+            }
+        }
         run.finish()
     }
 }
@@ -143,8 +169,65 @@ pub struct Run<'a> {
     tool_calls: u32,
     /// 這次執行出現過的工具呼叫 id;重複就是協定出錯(之後的接續也靠 id 不重複)。
     call_ids: HashSet<String>,
-    started: Instant,
+    /// 到 `since` 為止已經用掉的時間。總時間上限只算「真的在跑」的時間:等核准的時間不算(D-057)。
+    used: Duration,
+    /// 這一段開始跑的時間(開始、或核准之後接著跑)。
+    since: Instant,
+    /// 停下來等核准的那一輪。
+    waiting: Option<Waiting>,
     outcome: Option<Outcome>,
+}
+
+/// `next()` 交出來的東西。
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunEvent {
+    /// 完成一輪。
+    Step(Step),
+    /// 這一輪有要核准的工具呼叫,停下來了。呼叫端用 `resolve()` 回答之後再 `next()`;
+    /// 沒回答就 `next()`,會再拿到同一份清單(什麼都不會執行)。
+    NeedsApproval(Vec<Approval>),
+}
+
+/// 一個等核准的工具呼叫。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Approval {
+    pub call_id: String,
+    pub tool: String,
+    /// 模型給的原始參數(不可信,顯示前要整理)。
+    pub args_json: String,
+    /// 工具自己說明的「要做什麼」(`Tool::describe`;同樣不可信)。
+    pub description: String,
+}
+
+/// 對一個等核准的呼叫的回答。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    Approve,
+    /// 不執行;模型收到「使用者拒絕」的錯誤結果,可以換個做法。
+    Deny,
+}
+
+/// `resolve()` 的回答對不上等核准的清單。狀態不變,可以重新回答。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ResolveError {
+    #[error("the run is not waiting for approval")]
+    NotWaiting,
+    #[error("no pending tool call has id {0:?}")]
+    Unknown(String),
+    #[error("tool call {0:?} was answered twice")]
+    Duplicate(String),
+    #[error("tool call {0:?} has no answer")]
+    Missing(String),
+}
+
+/// 停下來等核准的一輪:模型的回應已經拿到(用量也算進去了),工具還沒執行。
+struct Waiting {
+    step: Step,
+    calls: Vec<Call>,
+    approvals: Vec<Approval>,
+    /// `resolve()` 之後才有:每個要核准的呼叫的回答。
+    decisions: Option<HashMap<String, Decision>>,
 }
 
 /// 一步 = 一次模型呼叫 + 這一輪的工具。內容完整,可以寫成軌跡、給 eval 打分。
@@ -186,7 +269,7 @@ pub enum Outcome {
     Failed {
         failure: AgentFailure,
     },
-    /// 呼叫者在結束之前就不再拉下一步。
+    /// 呼叫者在結束之前就不再拉下一步(包括停在等核准的時候)。
     Stopped,
 }
 
@@ -230,6 +313,7 @@ pub struct Finished {
 }
 
 /// 模型要的一次工具呼叫。
+#[derive(Debug, Clone)]
 struct Call {
     id: String,
     name: String,
@@ -241,20 +325,89 @@ impl Run<'_> {
         self.run_id
     }
 
-    /// 走一步:呼叫模型一次,需要的話執行這一輪的工具。結束之後回 `None`。
-    pub async fn next(&mut self) -> Option<Step> {
+    /// 走一步:呼叫模型一次,需要的話執行這一輪的工具;有要核准的工具時先停下來(`NeedsApproval`)。
+    /// 結束之後回 `None`。
+    pub async fn next(&mut self) -> Option<RunEvent> {
         if self.outcome.is_some() {
             return None;
         }
-        let (step, outcome) = self.step().await;
-        self.outcome = outcome;
-        // `inspect`:有值的時候順便做一件事(存一份),值照樣往外傳。
-        step.inspect(|s| self.steps.push(s.clone()))
+        // `take()`:把 Option 裡的值拿出來、原地留下 None。Java 沒有對應的寫法,因為 Java 不追蹤「誰擁有這個值」;
+        // 這裡要把 `Waiting` 整個搬出來(它的欄位要交給別的函式),所以得先從 `self` 身上拿走。
+        if let Some(waiting) = self.waiting.take() {
+            return Some(match waiting.decisions {
+                None => {
+                    let pending = waiting.approvals.clone();
+                    self.waiting = Some(waiting);
+                    RunEvent::NeedsApproval(pending)
+                }
+                Some(decisions) => {
+                    let step = self
+                        .finish_turn(waiting.step, waiting.calls, &decisions)
+                        .await;
+                    self.steps.push(step.clone());
+                    RunEvent::Step(step)
+                }
+            });
+        }
+        match self.step().await {
+            Turn::Done(step, outcome) => {
+                self.outcome = outcome;
+                // `inspect`:有值的時候順便做一件事(存一份),值照樣往外傳。
+                step.inspect(|s| self.steps.push(s.clone()))
+                    .map(RunEvent::Step)
+            }
+            Turn::Wait(waiting) => {
+                // 時間停在這裡:等核准的時間不算(D-057)。
+                self.used += self.since.elapsed();
+                let pending = waiting.approvals.clone();
+                self.waiting = Some(waiting);
+                Some(RunEvent::NeedsApproval(pending))
+            }
+        }
     }
 
-    /// 結束這次執行,拿到完整結果。還沒結束就呼叫,結果是 `Stopped`。
+    /// 正在等回答的呼叫;沒有在等(或已經回答了)就是空的。
+    pub fn pending(&self) -> &[Approval] {
+        match &self.waiting {
+            Some(w) if w.decisions.is_none() => &w.approvals,
+            _ => &[],
+        }
+    }
+
+    /// 回答等核准的呼叫:每一個都要剛好回答一次(依 call id)。對不上就回錯誤、什麼都不改。
+    /// 回答之後時間接著算,下一次 `next()` 執行這一輪(核准的執行、拒絕的回報給模型)。
+    pub fn resolve(&mut self, decisions: Vec<(String, Decision)>) -> Result<(), ResolveError> {
+        let waiting = match &mut self.waiting {
+            Some(waiting) if waiting.decisions.is_none() => waiting,
+            _ => return Err(ResolveError::NotWaiting),
+        };
+        let mut answers = HashMap::new();
+        for (call_id, decision) in decisions {
+            if !waiting.approvals.iter().any(|a| a.call_id == call_id) {
+                return Err(ResolveError::Unknown(call_id));
+            }
+            if answers.insert(call_id.clone(), decision).is_some() {
+                return Err(ResolveError::Duplicate(call_id));
+            }
+        }
+        if let Some(missing) = waiting
+            .approvals
+            .iter()
+            .find(|a| !answers.contains_key(&a.call_id))
+        {
+            return Err(ResolveError::Missing(missing.call_id.clone()));
+        }
+        waiting.decisions = Some(answers);
+        self.since = Instant::now();
+        Ok(())
+    }
+
+    /// 結束這次執行,拿到完整結果。還沒結束就呼叫,結果是 `Stopped`;停在等核准時,那一輪(模型的回應,沒有工具結果)也算進去。
     // 參數是 `self`(不是 `&self`):呼叫之後 Run 就被用掉了,不能再 `next()`。Java 只能靠文件提醒。
-    pub fn finish(self) -> Finished {
+    pub fn finish(mut self) -> Finished {
+        if let Some(waiting) = self.waiting.take() {
+            self.steps.push(waiting.step);
+        }
         Finished {
             run_id: self.run_id,
             outcome: self.outcome.unwrap_or(Outcome::Stopped),
@@ -263,19 +416,20 @@ impl Run<'_> {
         }
     }
 
-    async fn step(&mut self) -> (Option<Step>, Option<Outcome>) {
+    async fn step(&mut self) -> Turn {
         let agent = self.agent;
         let limits = &agent.config.limits;
         let limit = |limit| Some(Outcome::LimitReached { limit });
 
         // 呼叫模型之前先檢查護欄。token 只能事後知道,所以最多超出一輪。
         if self.steps.len() >= limits.max_turns as usize {
-            return (None, limit(Limit::Turns));
+            return Turn::Done(None, limit(Limit::Turns));
         }
         if total_tokens(&self.usage) >= limits.max_total_tokens {
-            return (None, limit(Limit::Tokens));
+            return Turn::Done(None, limit(Limit::Tokens));
         }
-        let deadline = self.started + Duration::from_secs(limits.deadline_secs);
+        let budget = Duration::from_secs(limits.deadline_secs).saturating_sub(self.used);
+        let deadline = self.since + budget;
 
         let request = Request {
             model: agent.config.model.clone(),
@@ -288,12 +442,12 @@ impl Run<'_> {
         let begun = Instant::now();
         // `timeout_at`:到截止時間還沒回來,就丟掉這個 future(等於取消請求)。
         let response = match timeout_at(deadline, agent.provider.complete(request)).await {
-            Err(_elapsed) => return (None, limit(Limit::Deadline)),
+            Err(_elapsed) => return Turn::Done(None, limit(Limit::Deadline)),
             Ok(Err(e)) => {
                 let failure = AgentFailure::Model {
                     message: e.to_string(),
                 };
-                return (None, Some(Outcome::Failed { failure }));
+                return Turn::Done(None, Some(Outcome::Failed { failure }));
             }
             Ok(Ok(response)) => response,
         };
@@ -321,25 +475,17 @@ impl Run<'_> {
                     // 要嘛整輪執行,要嘛停,不做一半。
                     limit(Limit::ToolCalls)
                 } else {
-                    step.tool_calls = self.execute(calls).await;
-                    self.messages.push(Message {
-                        role: Role::Assistant,
-                        // 整則內容原封不動接回去:thinking 區塊(含簽章)也在裡面,Anthropic 規定用工具時要這樣做。
-                        content: step.response.content.clone(),
-                    });
-                    self.messages.push(Message {
-                        role: Role::User,
-                        // 這一輪的全部結果放在同一則訊息,順序跟呼叫一樣。
-                        content: step
-                            .tool_calls
-                            .iter()
-                            .map(|r| Content::ToolResult {
-                                call_id: r.call_id.clone(),
-                                content: r.result.clone(),
-                                is_error: r.is_error,
-                            })
-                            .collect(),
-                    });
+                    let approvals = self.approvals(&calls).await;
+                    if !approvals.is_empty() {
+                        // 整輪一起等:沒有副作用的工具也等核准之後才跟著執行,暫停的狀態只有「還沒執行」一種。
+                        return Turn::Wait(Waiting {
+                            step,
+                            calls,
+                            approvals,
+                            decisions: None,
+                        });
+                    }
+                    step = self.finish_turn(step, calls, &HashMap::new()).await;
                     None
                 }
             }
@@ -351,7 +497,76 @@ impl Run<'_> {
                 })
             }
         };
-        (Some(step), outcome)
+        Turn::Done(Some(step), outcome)
+    }
+
+    /// 這一輪裡要核准的呼叫(`ApprovalPolicy::Ask` 而且工具有副作用)。參數太大的不算:它們不會被解析、也不會執行。
+    async fn approvals(&self, calls: &[Call]) -> Vec<Approval> {
+        let agent = self.agent;
+        if agent.config.approval == ApprovalPolicy::AutoApprove {
+            return Vec::new();
+        }
+        let mut approvals = Vec::new();
+        for call in calls {
+            if !agent.toolbox.needs_approval(&call.name)
+                || call.args_json.len() > agent.config.limits.max_args_bytes
+            {
+                continue;
+            }
+            let ctx = self.context(&call.id);
+            approvals.push(Approval {
+                call_id: call.id.clone(),
+                tool: call.name.clone(),
+                args_json: call.args_json.clone(),
+                description: agent
+                    .toolbox
+                    .describe(&call.name, &call.args_json, &ctx)
+                    .await,
+            });
+        }
+        approvals
+    }
+
+    fn context(&self, call_id: &str) -> ToolContext {
+        ToolContext {
+            run_id: self.run_id,
+            call_id: call_id.to_owned(),
+            clock: self.agent.config.clock,
+        }
+    }
+
+    /// 執行這一輪的工具(`decisions` 裡是 `Deny` 的不執行),把回應與結果接進對話。
+    async fn finish_turn(
+        &mut self,
+        mut step: Step,
+        calls: Vec<Call>,
+        decisions: &HashMap<String, Decision>,
+    ) -> Step {
+        let denied: HashSet<String> = decisions
+            .iter()
+            .filter(|(_, d)| **d == Decision::Deny)
+            .map(|(id, _)| id.clone())
+            .collect();
+        step.tool_calls = self.execute(calls, &denied).await;
+        self.messages.push(Message {
+            role: Role::Assistant,
+            // 整則內容原封不動接回去:thinking 區塊(含簽章)也在裡面,Anthropic 規定用工具時要這樣做。
+            content: step.response.content.clone(),
+        });
+        self.messages.push(Message {
+            role: Role::User,
+            // 這一輪的全部結果放在同一則訊息,順序跟呼叫一樣。
+            content: step
+                .tool_calls
+                .iter()
+                .map(|r| Content::ToolResult {
+                    call_id: r.call_id.clone(),
+                    content: r.result.clone(),
+                    is_error: r.is_error,
+                })
+                .collect(),
+        });
+        step
     }
 
     /// 同一輪裡重複、或跟之前的輪重複的 id。
@@ -363,8 +578,8 @@ impl Run<'_> {
             .map(|c| c.id.clone())
     }
 
-    /// 並行執行,結果照呼叫的順序排回去。
-    async fn execute(&mut self, calls: Vec<Call>) -> Vec<ToolCallRecord> {
+    /// 並行執行,結果照呼叫的順序排回去。`denied` 裡的不執行,結果是「使用者拒絕」。
+    async fn execute(&mut self, calls: Vec<Call>, denied: &HashSet<String>) -> Vec<ToolCallRecord> {
         let agent = self.agent;
         let run_id = self.run_id;
         self.tool_calls += u32::try_from(calls.len()).unwrap_or(u32::MAX);
@@ -374,7 +589,14 @@ impl Run<'_> {
         // 前面一個慢的工具會擋住後面的工具開始跑(head-of-line blocking)。
         let mut records: Vec<(usize, ToolCallRecord)> = futures::stream::iter(calls)
             .enumerate()
-            .map(|(i, call)| async move { (i, execute_one(agent, run_id, call).await) })
+            .map(|(i, call)| async move {
+                let record = if denied.contains(&call.id) {
+                    denied_record(call)
+                } else {
+                    execute_one(agent, run_id, call).await
+                };
+                (i, record)
+            })
             .buffer_unordered(agent.config.limits.max_parallel)
             .collect()
             .await;
@@ -420,6 +642,27 @@ async fn execute_one(agent: &Agent<'_>, run_id: Uuid, call: Call) -> ToolCallRec
         is_error,
         duration_ms: millis(begun),
     }
+}
+
+/// 被拒絕的呼叫:沒有執行,告訴模型是使用者拒絕的(它可以換個做法、或問使用者)。
+fn denied_record(call: Call) -> ToolCallRecord {
+    ToolCallRecord {
+        call_id: call.id,
+        name: call.name,
+        args_json: call.args_json,
+        result: DENIED.to_owned(),
+        is_error: true,
+        duration_ms: 0,
+    }
+}
+
+/// 被拒絕時交給模型的結果。
+pub const DENIED: &str = "the user denied this tool call; it was not executed";
+
+/// `step()` 的結果:這一輪做完了,或停下來等核准。
+enum Turn {
+    Done(Option<Step>, Option<Outcome>),
+    Wait(Waiting),
 }
 
 fn tool_calls(response: &Response) -> Vec<Call> {

@@ -273,6 +273,14 @@ fn build(provider: &dyn LlmProvider, config: AgentConfig) -> (Agent<'_>, Setup) 
     (Agent::new(provider, toolbox, config).unwrap(), setup)
 }
 
+/// 下一步一定要是完成的一輪(這些測試的工具都不用核准)。
+async fn next_step(run: &mut Run<'_>) -> Option<Step> {
+    match run.next().await? {
+        RunEvent::Step(step) => Some(step),
+        RunEvent::NeedsApproval(pending) => panic!("unexpected approval request: {pending:?}"),
+    }
+}
+
 fn failed(failure: AgentFailure) -> Outcome {
     Outcome::Failed { failure }
 }
@@ -442,7 +450,7 @@ async fn the_tool_gets_the_run_id_call_id_and_clock() {
     let (agent, _) = build(&*provider, config());
     let mut run = agent.start("你是誰");
     let run_id = run.run_id();
-    let step = run.next().await.unwrap();
+    let step = next_step(&mut run).await.unwrap();
     assert_eq!(
         step.tool_calls[0].result,
         format!("{run_id} toolu_9 2026-11-14T02:30:00Z")
@@ -845,10 +853,10 @@ async fn steps_can_be_pulled_one_at_a_time() {
     ]);
     let (agent, _) = build(&*provider, config());
     let mut run = agent.start("?");
-    let first = run.next().await.unwrap();
+    let first = next_step(&mut run).await.unwrap();
     assert_eq!(first.turn, 1);
     assert_eq!(first.tool_calls[0].result, "1");
-    let second = run.next().await.unwrap();
+    let second = next_step(&mut run).await.unwrap();
     assert_eq!(second.turn, 2);
     // 結束之後不再呼叫模型。
     assert!(run.next().await.is_none());
@@ -869,10 +877,388 @@ async fn finishing_early_is_recorded_as_stopped() {
     let provider = Scripted::new(vec![Reply::Now(tool_reply(&[("a", "count", "{}")]))]);
     let (agent, _) = build(&*provider, config());
     let mut run = agent.start("?");
-    run.next().await.unwrap();
+    next_step(&mut run).await.unwrap();
     let finished = run.finish();
     assert_eq!(finished.outcome, Outcome::Stopped);
     assert_eq!(finished.steps.len(), 1);
+}
+
+// ---- 核准(第三部分,D-056、D-057)----
+
+/// 有副作用的工具:記下做過什麼;要核准,說明「會做什麼」。
+struct Danger {
+    done: Arc<Mutex<Vec<String>>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DangerArgs {
+    target: String,
+}
+
+impl Tool for Danger {
+    type Args = DangerArgs;
+    fn name(&self) -> &str {
+        "danger"
+    }
+    fn description(&self) -> &str {
+        "有副作用"
+    }
+    async fn call(&self, args: DangerArgs, _ctx: &ToolContext) -> Result<String, ToolError> {
+        self.done.lock().unwrap().push(args.target.clone());
+        Ok(format!("did {}", args.target))
+    }
+    fn needs_approval(&self) -> bool {
+        true
+    }
+    async fn describe(&self, args: &DangerArgs, ctx: &ToolContext) -> Option<String> {
+        Some(format!("will touch {} ({})", args.target, ctx.call_id))
+    }
+}
+
+struct Guarded {
+    done: Arc<Mutex<Vec<String>>>,
+    count: Arc<Count>,
+}
+
+/// 工具組:count(不用核准)、danger(要核准)。
+fn guarded(provider: &dyn LlmProvider, approval: ApprovalPolicy) -> (Agent<'_>, Guarded) {
+    let done = Arc::new(Mutex::new(Vec::new()));
+    let count = Arc::new(Count::default());
+    let tools: Vec<Box<dyn ErasedTool>> = vec![
+        Box::new(Shared(count.clone())),
+        Box::new(Danger { done: done.clone() }),
+    ];
+    let mut config = config();
+    config.approval = approval;
+    let agent = Agent::new(provider, Arc::new(Toolbox::new(tools).unwrap()), config).unwrap();
+    (agent, Guarded { done, count })
+}
+
+fn pending(call_id: &str, target: &str) -> Approval {
+    Approval {
+        call_id: call_id.into(),
+        tool: "danger".into(),
+        args_json: format!(r#"{{"target":"{target}"}}"#),
+        description: format!("will touch {target} ({call_id})"),
+    }
+}
+
+fn danger(id: &'static str, target: &str) -> (&'static str, &'static str, String) {
+    (id, "danger", format!(r#"{{"target":"{target}"}}"#))
+}
+
+fn reply_with(calls: &[(&str, &str, String)]) -> Response {
+    let calls: Vec<(&str, &str, &str)> =
+        calls.iter().map(|(i, n, a)| (*i, *n, a.as_str())).collect();
+    tool_reply(&calls)
+}
+
+#[tokio::test]
+async fn a_side_effect_waits_for_approval_and_runs_once_approved() {
+    let provider = Scripted::new(vec![
+        Reply::Now(reply_with(&[danger("a", "notes.md")])),
+        Reply::Now(text_reply("寫好了")),
+    ]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("?");
+
+    assert_eq!(
+        run.next().await,
+        Some(RunEvent::NeedsApproval(vec![pending("a", "notes.md")]))
+    );
+    assert_eq!(run.pending(), [pending("a", "notes.md")]);
+    // 還沒核准:什麼都沒做;再拉一次拿到同一份清單,不會多呼叫模型、也不會執行。
+    assert_eq!(
+        run.next().await,
+        Some(RunEvent::NeedsApproval(vec![pending("a", "notes.md")]))
+    );
+    assert!(g.done.lock().unwrap().is_empty());
+    assert_eq!(provider.requests().len(), 1);
+
+    run.resolve(vec![("a".into(), Decision::Approve)]).unwrap();
+    assert_eq!(run.pending(), []);
+    let Some(RunEvent::Step(step)) = run.next().await else {
+        panic!("expected the turn to finish")
+    };
+    assert_eq!(step.turn, 1);
+    assert_eq!(step.tool_calls[0].result, "did notes.md");
+    assert!(!step.tool_calls[0].is_error);
+    assert_eq!(*g.done.lock().unwrap(), ["notes.md"]);
+
+    assert!(matches!(run.next().await, Some(RunEvent::Step(_))));
+    let finished = run.finish();
+    assert_eq!(
+        finished.outcome,
+        Outcome::Answered {
+            text: "寫好了".into()
+        }
+    );
+    // 結果有交回模型。
+    let second = &provider.requests()[1];
+    assert_eq!(
+        second.messages[2].content,
+        [Content::ToolResult {
+            call_id: "a".into(),
+            content: "did notes.md".into(),
+            is_error: false
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_denied_call_is_not_run_and_the_model_is_told() {
+    let provider = Scripted::new(vec![
+        Reply::Now(reply_with(&[danger("a", "notes.md")])),
+        Reply::Now(text_reply("好,不寫")),
+    ]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("?");
+    run.next().await.unwrap();
+    run.resolve(vec![("a".into(), Decision::Deny)]).unwrap();
+    let Some(RunEvent::Step(step)) = run.next().await else {
+        panic!("expected the turn to finish")
+    };
+    assert_eq!(
+        step.tool_calls,
+        [ToolCallRecord {
+            call_id: "a".into(),
+            name: "danger".into(),
+            args_json: r#"{"target":"notes.md"}"#.into(),
+            result: DENIED.into(),
+            is_error: true,
+            duration_ms: 0,
+        }]
+    );
+    assert!(g.done.lock().unwrap().is_empty());
+    while run.next().await.is_some() {}
+    assert_eq!(
+        provider.requests()[1].messages[2].content,
+        [Content::ToolResult {
+            call_id: "a".into(),
+            content: DENIED.into(),
+            is_error: true
+        }]
+    );
+}
+
+#[tokio::test]
+async fn the_whole_turn_waits_and_keeps_its_order() {
+    // count(不用核准)夾在兩個 danger 中間:核准一個、拒絕一個;三個結果照呼叫的順序。
+    let provider = Scripted::new(vec![
+        Reply::Now(reply_with(&[
+            danger("a", "x"),
+            ("b", "count", "{}".into()),
+            danger("c", "y"),
+        ])),
+        Reply::Now(text_reply("ok")),
+    ]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("?");
+    assert_eq!(
+        run.next().await,
+        Some(RunEvent::NeedsApproval(vec![
+            pending("a", "x"),
+            pending("c", "y")
+        ]))
+    );
+    // 沒有副作用的也等:核准之前 count 一次都沒被呼叫。
+    assert_eq!(g.count.calls.load(Ordering::SeqCst), 0);
+    run.resolve(vec![
+        ("c".into(), Decision::Deny),
+        ("a".into(), Decision::Approve),
+    ])
+    .unwrap();
+    let Some(RunEvent::Step(step)) = run.next().await else {
+        panic!("expected the turn to finish")
+    };
+    let results: Vec<(&str, &str)> = step
+        .tool_calls
+        .iter()
+        .map(|r| (r.call_id.as_str(), r.result.as_str()))
+        .collect();
+    assert_eq!(results, [("a", "did x"), ("b", "1"), ("c", DENIED)]);
+    assert_eq!(*g.done.lock().unwrap(), ["x"]);
+}
+
+#[tokio::test]
+async fn auto_approve_runs_side_effects_without_asking() {
+    let provider = Scripted::new(vec![
+        Reply::Now(reply_with(&[danger("a", "notes.md")])),
+        Reply::Now(text_reply("寫好了")),
+    ]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::AutoApprove);
+    let mut run = agent.start("?");
+    let Some(RunEvent::Step(step)) = run.next().await else {
+        panic!("auto-approve must not ask")
+    };
+    assert_eq!(step.tool_calls[0].result, "did notes.md");
+    assert_eq!(*g.done.lock().unwrap(), ["notes.md"]);
+}
+
+#[tokio::test]
+async fn run_to_completion_denies_what_nobody_can_approve() {
+    let provider = Scripted::new(vec![
+        Reply::Now(reply_with(&[danger("a", "notes.md")])),
+        Reply::Now(text_reply("好,不寫")),
+    ]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    let finished = agent.run("?").await;
+    assert_eq!(finished.steps[0].tool_calls[0].result, DENIED);
+    assert!(g.done.lock().unwrap().is_empty());
+    assert_eq!(
+        finished.outcome,
+        Outcome::Answered {
+            text: "好,不寫".into()
+        }
+    );
+}
+
+#[tokio::test]
+async fn answers_must_match_the_pending_calls_exactly() {
+    let provider = Scripted::new(vec![Reply::Now(reply_with(&[
+        danger("a", "x"),
+        danger("b", "y"),
+    ]))]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("?");
+    assert_eq!(
+        run.resolve(vec![("a".into(), Decision::Approve)]),
+        Err(ResolveError::NotWaiting),
+        "nothing is pending before the model asks"
+    );
+    run.next().await.unwrap();
+    let approve = |id: &str| (id.to_owned(), Decision::Approve);
+    assert_eq!(
+        run.resolve(vec![approve("a")]),
+        Err(ResolveError::Missing("b".into()))
+    );
+    assert_eq!(
+        run.resolve(vec![approve("a"), approve("b"), approve("z")]),
+        Err(ResolveError::Unknown("z".into()))
+    );
+    assert_eq!(
+        run.resolve(vec![approve("a"), approve("a"), approve("b")]),
+        Err(ResolveError::Duplicate("a".into()))
+    );
+    // 錯的回答什麼都沒改:還在等同一份清單。
+    assert_eq!(run.pending(), [pending("a", "x"), pending("b", "y")]);
+    assert!(matches!(run.next().await, Some(RunEvent::NeedsApproval(_))));
+    assert!(g.done.lock().unwrap().is_empty());
+    // 回答過一次之後,不能再回答。
+    run.resolve(vec![approve("a"), approve("b")]).unwrap();
+    assert_eq!(
+        run.resolve(vec![approve("a"), approve("b")]),
+        Err(ResolveError::NotWaiting)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn time_spent_waiting_for_approval_does_not_count_toward_the_deadline() {
+    let provider = Scripted::new(vec![
+        Reply::After(Duration::from_secs(4), reply_with(&[danger("a", "x")])),
+        Reply::After(Duration::from_secs(4), text_reply("趕上了")),
+    ]);
+    let (mut agent, _) = guarded(&*provider, ApprovalPolicy::Ask);
+    agent.config.limits.deadline_secs = 10;
+    let mut run = agent.start("?");
+    run.next().await.unwrap();
+    // 人去喝了一小時咖啡。
+    tokio::time::sleep(Duration::from_secs(3600)).await;
+    run.resolve(vec![("a".into(), Decision::Approve)]).unwrap();
+    while run.next().await.is_some() {}
+    // 真的在跑的時間是 4 + 4 = 8 秒,在 10 秒以內。
+    assert_eq!(
+        run.finish().outcome,
+        Outcome::Answered {
+            text: "趕上了".into()
+        }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn time_before_the_pause_still_counts_toward_the_deadline() {
+    let provider = Scripted::new(vec![
+        Reply::After(Duration::from_secs(6), reply_with(&[danger("a", "x")])),
+        Reply::After(Duration::from_secs(6), text_reply("太晚了")),
+    ]);
+    let (mut agent, _) = guarded(&*provider, ApprovalPolicy::Ask);
+    agent.config.limits.deadline_secs = 10;
+    let mut run = agent.start("?");
+    run.next().await.unwrap();
+    tokio::time::sleep(Duration::from_secs(3600)).await;
+    run.resolve(vec![("a".into(), Decision::Approve)]).unwrap();
+    let resumed = Instant::now();
+    while run.next().await.is_some() {}
+    // 暫停前用了 6 秒,只剩 4 秒:第二次呼叫在接續後第 4 秒被取消。
+    assert_eq!(run.finish().outcome, limit(Limit::Deadline));
+    assert_eq!(resumed.elapsed(), Duration::from_secs(4));
+}
+
+#[tokio::test]
+async fn finishing_while_waiting_is_stopped_and_keeps_the_paid_turn() {
+    let provider = Scripted::new(vec![Reply::Now(reply_with(&[danger("a", "x")]))]);
+    let (agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("?");
+    run.next().await.unwrap();
+    let finished = run.finish();
+    assert_eq!(finished.outcome, Outcome::Stopped);
+    // 模型的回應付過錢了(用量算在裡面),紀錄也要有;工具沒有執行。
+    assert_eq!(finished.steps.len(), 1);
+    assert_eq!(finished.steps[0].tool_calls, []);
+    assert_eq!(finished.usage, usage());
+    assert!(g.done.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn oversized_arguments_are_refused_without_asking() {
+    let provider = Scripted::new(vec![
+        Reply::Now(reply_with(&[danger("a", &"x".repeat(100))])),
+        Reply::Now(text_reply("ok")),
+    ]);
+    let (mut agent, g) = guarded(&*provider, ApprovalPolicy::Ask);
+    agent.config.limits.max_args_bytes = 50;
+    let mut run = agent.start("?");
+    let Some(RunEvent::Step(step)) = run.next().await else {
+        panic!("oversized arguments must not be shown for approval")
+    };
+    assert_eq!(
+        step.tool_calls[0].result,
+        "arguments are larger than 50 bytes"
+    );
+    assert!(g.done.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_tool_call_limit_is_checked_before_asking() {
+    let provider = Scripted::new(vec![Reply::Now(reply_with(&[
+        danger("a", "x"),
+        danger("b", "y"),
+    ]))]);
+    let (mut agent, _) = guarded(&*provider, ApprovalPolicy::Ask);
+    agent.config.limits.max_tool_calls = 1;
+    let mut run = agent.start("?");
+    // 這一輪本來就不會執行:不要拿來問人。
+    assert!(matches!(run.next().await, Some(RunEvent::Step(_))));
+    assert_eq!(run.finish().outcome, limit(Limit::ToolCalls));
+}
+
+#[tokio::test]
+async fn the_description_shown_for_invalid_arguments_includes_them() {
+    let provider = Scripted::new(vec![Reply::Now(tool_reply(&[(
+        "a",
+        "danger",
+        r#"{"path":"x"}"#,
+    )]))]);
+    let (agent, _) = guarded(&*provider, ApprovalPolicy::Ask);
+    let mut run = agent.start("?");
+    let Some(RunEvent::NeedsApproval(pending)) = run.next().await else {
+        panic!("expected an approval request")
+    };
+    assert_eq!(
+        pending[0].description,
+        "invalid arguments: unknown field `path`, expected `target`\narguments: {\"path\":\"x\"}"
+    );
 }
 
 // ---- 設定 ----

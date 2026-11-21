@@ -20,7 +20,8 @@ use agent::tools::mcp::CallTool;
 use agent::tools::{Calculator, CurrentTime, ListDir, ReadFile, Root, select_mcp_tools};
 use agent::trajectory::{Event, TrajectoryWriter};
 use agent::{
-    Agent, AgentConfig, Clock, DEFAULT_SYSTEM, ErasedTool, Finished, Limit, Outcome, Step, Toolbox,
+    Agent, AgentConfig, ApprovalPolicy, Clock, DEFAULT_SYSTEM, Decision, ErasedTool, Finished,
+    Limit, Outcome, RunEvent, Step, Toolbox,
 };
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -114,6 +115,7 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
             limits: limits.clone(),
             clock: Clock::System,
             provider_options: ProviderMetadata::default(),
+            approval: ApprovalPolicy::Ask,
         },
     )?;
 
@@ -141,9 +143,21 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
         tools: tool_names,
         limits: limits.clone(),
     });
-    while let Some(step) = run.next().await {
-        print_step(&step);
-        write(&Event::Step { step });
+    while let Some(event) = run.next().await {
+        match event {
+            RunEvent::Step(step) => {
+                print_step(&step);
+                write(&Event::Step { step });
+            }
+            RunEvent::NeedsApproval(pending) => {
+                // 核准提示在第 3 步(跟寫檔工具一起)加上;在那之前沒有工具需要核准,萬一有就全部拒絕(fail-closed)。
+                let deny_all = pending
+                    .into_iter()
+                    .map(|a| (a.call_id, Decision::Deny))
+                    .collect();
+                run.resolve(deny_all)?;
+            }
+        }
     }
     let finished = run.finish();
     let cost = config::cost(&finished.steps, &settings.prices);

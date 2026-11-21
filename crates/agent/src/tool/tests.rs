@@ -339,3 +339,80 @@ fn the_system_clock_follows_real_time() {
         "{before} <= {now} <= {after}"
     );
 }
+
+// ---- 核准用的資訊(第三部分)----
+
+/// 要核准、但沒有自己寫說明的工具。
+struct Plain;
+
+impl Tool for Plain {
+    type Args = AddArgs;
+    fn name(&self) -> &str {
+        "plain"
+    }
+    fn description(&self) -> &str {
+        "要核准,沒寫說明"
+    }
+    async fn call(&self, _args: AddArgs, _ctx: &ToolContext) -> Result<String, ToolError> {
+        Ok(String::new())
+    }
+    fn needs_approval(&self) -> bool {
+        true
+    }
+}
+
+/// 要核准、說明自己會做什麼。
+struct Explained;
+
+impl Tool for Explained {
+    type Args = AddArgs;
+    fn name(&self) -> &str {
+        "explained"
+    }
+    fn description(&self) -> &str {
+        "要核准,有說明"
+    }
+    async fn call(&self, _args: AddArgs, _ctx: &ToolContext) -> Result<String, ToolError> {
+        Ok(String::new())
+    }
+    fn needs_approval(&self) -> bool {
+        true
+    }
+    async fn describe(&self, args: &AddArgs, ctx: &ToolContext) -> Option<String> {
+        Some(format!("{} + {} ({})", args.a, args.b, ctx.call_id))
+    }
+}
+
+fn guarded_toolbox() -> Toolbox {
+    Toolbox::new(vec![
+        Box::new(Add::default()),
+        Box::new(Plain),
+        Box::new(Explained),
+    ])
+    .unwrap()
+}
+
+#[test]
+fn only_tools_that_say_so_need_approval() {
+    let toolbox = guarded_toolbox();
+    assert!(!toolbox.needs_approval("add"), "the default is no approval");
+    assert!(toolbox.needs_approval("plain"));
+    assert!(toolbox.needs_approval("explained"));
+    assert!(!toolbox.needs_approval("missing"));
+}
+
+#[tokio::test]
+async fn the_description_comes_from_the_tool_or_falls_back_to_the_arguments() {
+    let toolbox = guarded_toolbox();
+    let args = r#"{"a": 1, "b": 2}"#;
+    assert_eq!(
+        toolbox.describe("explained", args, &ctx()).await,
+        format!("1 + 2 ({})", ctx().call_id)
+    );
+    assert_eq!(toolbox.describe("plain", args, &ctx()).await, args);
+    assert_eq!(toolbox.describe("missing", args, &ctx()).await, args);
+    assert_eq!(
+        toolbox.describe("explained", r#"{"a": 1}"#, &ctx()).await,
+        "invalid arguments: missing field `b`\narguments: {\"a\": 1}"
+    );
+}

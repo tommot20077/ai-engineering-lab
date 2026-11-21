@@ -117,6 +117,19 @@ dockerd 不會自己常駐:每個雲端 session 要先在背景啟動(`dockerd`)
   再 `docker tag` 成 `rust:1.99.1-slim`。CI(GitHub Actions)直接從 Docker Hub 拉。
 - **沒有 swap 的機器上**,`--memory-swap` 拿掉看不出差別(這台雲端 VM 就是);參數由單元測試鎖住。
 
+## 7.2 實作筆記(第 2 步,2026-11-21)
+
+- **API**:`Run::next()` 回傳 `RunEvent::Step` 或 `RunEvent::NeedsApproval(Vec<Approval>)`;`run.resolve(vec![(call_id, Decision)])`
+  每個等核准的呼叫都要剛好回答一次,對不上(少、多、重複、沒有在等)就回 `ResolveError`、狀態不變。沒回答就 `next()`,拿到同一份清單。
+- **`ApprovalPolicy::{Ask, AutoApprove}`** 放在 `AgentConfig`:預設 `Ask`;eval 用 `AutoApprove`(D-056 的「eval 一律不問」);CLI 的 `--yes` 在第 3 步。
+- **`Agent::run()`(一次跑完)遇到要核准的呼叫:全部拒絕**(沒有人可以問,fail-closed),模型收到「使用者拒絕」。
+- **同一輪裡沒有副作用的工具,也等核准之後才跟著執行**(§3 寫「照常執行」,意思是它們不需要核准):暫停的狀態只有「整輪都還沒執行」一種,
+  第 4 步存檔時不必存半輪的結果;讀檔、時間之類的結果也是核准當下的,不是幾小時前的。
+- **檢查順序**:重複的 id → 工具呼叫數上限 → 核准。整輪會被上限擋下時不拿來問人;參數超過大小上限的呼叫不問(它們不會被解析、也不會執行)。
+- **時間**:`used`(已經用掉的)+ `since`(這一段開始的時間);暫停時把這一段加進 `used`,`resolve()` 時重設 `since`。
+- **停在等核准時 `finish()`**:結果是 `Stopped`,那一輪(模型的回應,用量已經算進去)也放進 `steps`,工具結果是空的。
+- 拒絕的呼叫:`is_error: true`,結果是固定字串 `DENIED`,`duration_ms: 0`。
+
 ## 8. 不做
 
 - 通用 shell、網路存取、多檔專案(`cargo` + 外部 crate)、`runs`(執行比對輸出)。
