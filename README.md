@@ -47,6 +47,9 @@ Python 模型層  微調 · embedding / reranker · 推論服務
 | [`gateway`](crates/gateway/README.md) | 把 `llm` 包成本機 HTTP 服務:token / Host 檢查、上限、SSE、優雅關機,每次呼叫寫一行 JSONL | binary |
 | [`config-loader`](crates/config-loader/README.md) | 所有 binary 共用的設定讀取:路徑、TOML、秘密 | library |
 | [`eval`](crates/eval/README.md) | 對資料集跑模型、打分、比較兩次執行(信賴區間、雜訊底線),從呼叫紀錄加案例 | library + binary |
+| [`agent`](crates/agent/README.md) | 手寫的 agent runtime:工具介面、內建工具、有護欄的 loop、軌跡;接 MCP server 的工具 | library + binary |
+| [`mcp`](crates/mcp/README.md) | 從零寫的 MCP client(協定 2026-07-28):stdio 與 Streamable HTTP | library |
+| [`sandbox`](crates/sandbox/README.md) | 在隔離的容器裡編譯、執行不可信的單檔 Rust(沒有網路、唯讀、nobody、上限) | library |
 
 ## 快速開始
 

@@ -70,12 +70,14 @@
 - **live 測試通過**(2026-11-21):對官方參考 server `@modelcontextprotocol/server-everything` 2.3.0,stdio 與 HTTP 都過;
   22 個工具沒有一個被拒絕,`x-mcp-header` 的 base64 header 被參考 server 接受。
 - **003 第三部分(沙箱與有副作用的工具)**:設計已定案 `docs/modules/003-agent-runtime/design-part3.md`(2026-11-21,使用者逐一確認,D-053~D-058)。
-- **下一步**:003 第三部分第 1 步:`crates/sandbox`(容器沙箱 + 逃逸測試)。
+- **003 第三部分進度**(使用者交代 2026-11-21:7 步一路做完再一起看):
+  - 第 1 步完成:`crates/sandbox`(`Sandbox` trait、`ContainerSandbox`、假 docker 的流程測試、對真容器的 14 個逃逸測試;CI 設 `SANDBOX_DOCKER=1`)。
+- **下一步**:003 第三部分第 2 步:核准的狀態機(`NeedsApproval`、`resolve`、工具的「要做什麼」說明)。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
   (A:新增 13 個、加強 3 個測試;C:4 個等價或不值得測、1 個只能靠逾時抓到,寫理由排除在 `.cargo/mutants.toml`)。
-- **最後更新**:2026-11-15
+- **最後更新**:2026-11-21
 
 ## 決策
 

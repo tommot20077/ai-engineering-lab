@@ -99,6 +99,24 @@ crates/eval/src/           Check::Compiles
 2026-11-15 草案時,雲端 session 的權限模式擋下了執行容器;2026-11-21 使用者換了權限模式後可以執行,隔離參數實測有效。
 dockerd 不會自己常駐:每個雲端 session 要先在背景啟動(`dockerd`)。
 
+## 7.1 實作筆記(第 1 步,2026-11-21)
+
+做的時候才發現、或實測之後才決定的事:
+
+- **每次一個容器,分四步**:`run --detach … sleep N` → `exec --interactive … cat`(原始碼走 stdin)→ `exec rustc` → `exec /work/main` → `rm --force`。
+  編譯與執行分開計時、分開收輸出;逾時由**主機**判斷(容器裡的 `timeout` 跟不可信的程式同一個使用者,可以被 kill)。
+  `sleep N` 是所有步驟上限的總和加寬限:我們被 SIGKILL、來不及收掉時,容器時間到自己結束,`--rm` 刪掉它。
+- **docker 的 tmpfs 預設是 `noexec`、擁有者是 root**:nobody 寫不進去、編譯出來的程式不能執行。
+  改成 `--tmpfs /work:rw,exec,nosuid,nodev,size=…,uid=65534,gid=65534,mode=0700`。
+- **`TMPDIR=/work`**:rustc 不需要(暫存檔放在 `-o` 的目錄),但程式用 `std::env::temp_dir()` 時要落在可寫的地方;逃逸測試有測。
+- **CapBnd**:不是 root 時 CapEff、CapPrm 本來就是 0,看不出 `--cap-drop ALL` 有沒有效;要看上限 CapBnd(mutation 檢查時發現)。
+- **`--pull never`**:沙箱不自動下載 image(1 GB 以上,不該在工具呼叫裡默默發生);不在本機時錯誤訊息附上 `docker pull` 指令。
+  image 必須是 `name@sha256:<64 hex>`,不然建立沙箱時就失敗。
+- **取消也要收掉容器**:`Container` 守衛(RAII);future 被 drop 時在背景送 `docker rm --force`。
+- **Docker Hub 對雲端環境回 429**(匿名下載次數上限):改從 Google 的 Docker Hub 鏡像 `mirror.gcr.io/library/rust` 拉,digest 一樣,
+  再 `docker tag` 成 `rust:1.99.1-slim`。CI(GitHub Actions)直接從 Docker Hub 拉。
+- **沒有 swap 的機器上**,`--memory-swap` 拿掉看不出差別(這台雲端 VM 就是);參數由單元測試鎖住。
+
 ## 8. 不做
 
 - 通用 shell、網路存取、多檔專案(`cargo` + 外部 crate)、`runs`(執行比對輸出)。
