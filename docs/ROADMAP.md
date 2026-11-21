@@ -230,7 +230,14 @@
   原因沒有確定;已經把測試用的 MCP server(`crates/mcp/src/bin/`)排除在 mutants 之外(它被改壞時最可能卡住或一直吃資源)。
   如果之後還發生,就要決定上面的記憶體上限。
   **分支累積比較跑不完**(2026-11-15,`20d6337`):003 第二部分整個分支累積的 mutant 太多,60 分鐘的上限到了被取消,
-  只拿到前段的結果(11 個 MISSED,已處理)。要決定:分支只比較最近幾個 commit、提高上限、或分 crate 平行跑。
+  只拿到前段的結果(11 個 MISSED,已處理)。
+  **使用者決定的計畫(2026-11-21),依數字分階段**:
+  1. 分支一部分做完就合回 main:diff 的量跟著每一步的改動走,不會隨專案變大(這次的原因是 35 個 commit 沒合)。
+  2. 合併後 diff 仍常超過約 30 分鐘:讓每個 mutant 變快。2026-11-21 在雲端 session(4 核)量過:
+     - 給 mutants 的 profile 關掉 debuginfo(`debug = 0`,保留 debug assertions 與 overflow 檢查):改一個 mcp 檔案後重編整個
+       workspace 的測試從 17.9 秒變 11.4 秒(-36%,`CARGO_INCREMENTAL=0`,同 CI);target 從 9.3 GB 變 1.2 GB;683 個測試結果一樣。
+     - cargo-nextest:整個 workspace 跑一次測試從 7.2 秒變 5.3 秒(-27%);這個 repo 沒有 doctest(nextest 不跑 doctest)。
+  3. 每週全量超過約 90 分鐘:用 cargo-mutants 內建的 `--shard k/n` 拆成 matrix 平行跑,n 取「每份約 30 分鐘」;上限維持 120 分鐘當保險。
 - **跑 MCP 的 live 測試**(003 第二部分第 6 步):在有 Node 的機器上跑 `cargo test -p mcp --test live -- --ignored`
   (stdio 由測試自己用 npx 啟動;HTTP 要先 `PORT=3001 npx -y @modelcontextprotocol/server-everything@2.3.0 streamableHttp`)。
   有不一致就從真的 server 錄下訊息當測試資料。雲端開發環境的權限不允許執行從 npm 下載的程式,所以還沒跑過。
