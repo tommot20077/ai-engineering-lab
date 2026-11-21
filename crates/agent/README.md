@@ -94,6 +94,8 @@ tools = ["search", "read"]             # 白名單,必填
 | stdio 的子行程只拿到 PATH、HOME、LANG 與設定的 `env` | API key 不會漏給第三方程式 |
 | 所有 server 在第一次呼叫模型之前連好,任何一個失敗就結束(結束碼 2) | 一毛錢都還沒花 |
 
+server 自己需要上網、而你在 proxy 後面時,proxy 的環境變數也要寫進 `env`(子行程不會繼承)。
+
 只支援協定 2026-07-28;舊版(要 `initialize`)的 server 會得到明確的錯誤。eval 不接 MCP(題目只用內建工具,結果才可重現)。
 
 ## 護欄與設定

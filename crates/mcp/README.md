@@ -91,8 +91,12 @@ PORT=3001 npx -y @modelcontextprotocol/server-everything@2.3.0 streamableHttp
 cargo test -p mcp --test live -- --ignored live_http
 ```
 
-> 2026-11-15:在開發用的雲端環境裡,執行從 npm 下載的程式被權限設定擋下,所以這兩個測試**還沒有實際跑過**。
-> 已經讀過參考 server 2.3.0 的原始碼(工具名稱與 schema,`get-header-params` 用 `x-mcp-header`),測試照它寫。
+> 2026-11-21 跑過,兩個都通過:參考 server 2.3.0 的 22 個工具沒有一個被拒絕;HTTP 上 `get-header-params` 回報收到的
+> `Mcp-Param-Region` 是 `=?base64?5pel5pys?=`(「日本」),參考 server 也驗證過它跟 body 一致。
+>
+> 在需要 proxy 才能上網的環境(例如雲端開發環境),`npx` 拿不到 proxy 的設定:子行程的環境變數被清空了(D-050),
+> 下載套件時 TLS 驗證會失敗。先 `npm install @modelcontextprotocol/server-everything@2.3.0`,再用
+> `MCP_LIVE_COMMAND="<路徑>/node_modules/.bin/mcp-server-everything stdio"` 直接執行。
 
 ## 原始碼導覽
 

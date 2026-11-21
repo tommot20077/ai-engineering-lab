@@ -237,7 +237,7 @@ tools = ["lookup"]
 | 3 | `McpClient`:`server/discover` 探測、每個請求的 `_meta`、tools/list 分頁、tools/call **(完成)** | async 的狀態流程、錯誤分類 |
 | 4 | HTTP 傳輸 + 測試 server(HTTP)**(完成)** | reqwest 不跟 redirect、SSE 串流裡找回應、同一組測試跑兩種傳輸 |
 | 5 | agent 整合:`McpTool`、`[[mcp]]` 設定、白名單、E2E **(完成)** | `jsonschema` 編譯一次重複用、`Box<dyn ErasedTool>` 混著內建與 MCP 工具 |
-| 6 | 對真的參考 server 跑一次(`#[ignore]`)、README、retro **(完成;live 測試寫好但還沒實際跑,見 retro)** | — |
+| 6 | 對真的參考 server 跑一次(`#[ignore]`)、README、retro **(完成;live 測試 2026-11-21 跑過、都通過)** | — |
 
 ## 9. 已決定的小事(2026-11-14,使用者逐一確認,都照建議)
 

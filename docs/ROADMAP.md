@@ -67,12 +67,10 @@
   agent 整合(第 5 步:`McpTool` + jsonschema 驗證、`[[mcp]]` 設定與白名單、E2E)。
 - **MCP 規格改版**(第 3 步開工時查到,D-052):最新版 2026-07-28 是無狀態的,拿掉了 `initialize` 與 `Mcp-Session-Id`;
   設計照 §9-2「只支援最新的一版」改寫,細節在 design-part2 §4。
-- **live 測試還沒跑**:`crates/mcp/tests/live.rs`(對官方參考 server)寫好了,但雲端環境不允許執行從 npm 下載的程式;
-  要在自己的機器上跑 `cargo test -p mcp --test live -- --ignored`(見待辦)。
-- **003 第三部分(沙箱)**:草案 `docs/modules/003-agent-runtime/design-part3.md`(2026-11-15)。七個分岔由 Claude 先選建議方案、
-  標「待確認」(使用者交代);**實作還沒開始**:雲端開發環境不允許執行容器(`docker run` 被權限系統擋下),見草案 §7。
-- **下一步**:使用者看過第二部分的成果、確認或推翻第三部分草案的分岔,並決定開發環境(草案 §7 的 a / b / c)。
-- **使用者交代(2026-11-15)**:003 全部做完再一起看;第三部分的設計分岔由 Claude 先選建議方案、在文件裡標明,使用者看的時候可以推翻。
+- **live 測試通過**(2026-11-21):對官方參考 server `@modelcontextprotocol/server-everything` 2.3.0,stdio 與 HTTP 都過;
+  22 個工具沒有一個被拒絕,`x-mcp-header` 的 base64 header 被參考 server 接受。
+- **003 第三部分(沙箱與有副作用的工具)**:設計已定案 `docs/modules/003-agent-runtime/design-part3.md`(2026-11-21,使用者逐一確認,D-053~D-058)。
+- **下一步**:003 第三部分第 1 步:`crates/sandbox`(容器沙箱 + 逃逸測試)。
   eval 還有幾個發現等使用者決定,見「待辦」的第一條。
 - **001 LLM Gateway**:完成(2026-11-01)。`crates/llm`、`crates/config-loader`、`crates/gateway`;回顧 `docs/modules/001-llm-gateway/retro.md`。
   cargo-mutants 每週排程(`.github/workflows/mutants.yml`)已加入;第一次跑出的 35 個 missed 已全部處理
@@ -135,6 +133,12 @@
 | D-050 | MCP 工具白名單:`agent.toml` 為每個 server 列出允許的工具;名稱加 server 前綴;子行程清空環境變數 | server 給的名稱與說明會進 prompt(可能藏 injection);server 升級多出的工具不能自動給模型;API key 不能漏給第三方程式 | 2026-11-14 |
 | D-051 | MCP 的測試用自己寫的測試 server(stdio 與 HTTP,可以故意出錯);另寫 `#[ignore]` 測試對真的參考 server 跑 | CI 不需要 Node / Python;能製造錯誤;第一部分的教訓是假的要跟真的對過 | 2026-11-14 |
 | D-052 | MCP 協定版本 2026-07-28(無狀態):沒有 `initialize`,每個請求在 `params._meta` 帶版本、client 能力(空的)、client 名稱;連線時用 `server/discover` 探測(舊版 server 得到明確的錯誤);結果的 `resultType` 缺少時當 `complete`,`input_required` 不支援;放棄的請求送 `notifications/cancelled` | 照 §9-2「只支援當時最新的一版」。設計時憑記憶寫了 `initialize`,實作前查規格才發現已經改版(§4 要求「先讀規格確認」,這次真的派上用場);舊版 server 不支援,Tier 1 SDK 都已支援新版 | 2026-11-15 |
+| D-053 | 003 第三部分範圍:`write_file`、`edit_file`、沙箱裡編譯並執行單檔 Rust 的 `run_rust`、eval 的 `compiles`(只編譯);不做通用 shell | 涵蓋寫檔、跑程式、D-040 三個目標;單檔 Rust 讓攻擊面可控;「執行比對輸出」之後用同一個沙箱再加 | 2026-11-21 |
+| D-054 | 沙箱用容器(Docker / Podman):沒有網路、唯讀根目錄、只有 tmpfs 工作目錄、nobody、拿掉所有 capability、no-new-privileges、記憶體 / CPU / 行程數 / 時間上限;image 用官方 `rust:<版本>-slim` 並以 digest 鎖定;放在新的 `crates/sandbox` | 編譯本身就是執行(`include_str!` 讀主機檔案),只用行程層級的限制不是隔離;Mac 與 Linux CI 行為一樣;自己寫 namespaces 只能在 Linux | 2026-11-21 |
+| D-055 | 檔案工具改用 `cap-std`(從根目錄 handle 一段一段往下開、拒絕 symlink),讀檔工具一起改 | 「先檢查再開檔」有空隙(TOCTOU),寫入不能復原 | 2026-11-21 |
+| D-056 | 有副作用的工具:`--allow-write`、`--allow-run` 打開才註冊;打開後每次呼叫都要核准,`--yes` 才不問;eval 一律不問 | 兩層:給不給模型這個能力、每次要不要過目;預設最安全 | 2026-11-21 |
+| D-057 | 核准用狀態機(`Run::next()` 回傳「需要核准」、呼叫端回答後接續),暫停的狀態可以存檔,`agent resume <run-id>` 接續;等待核准的時間不算進總時間 | 核准可以晚一點才給、中間程式重開也沒關係;D-042 當時說「有人工核准的工具再做狀態機」,這次就是那個時候 | 2026-11-21 |
+| D-058 | 寫檔:`write_file`(新建或整份覆寫)+ `edit_file`(`old` 剛好出現一次才取代);暫存檔 + rename;核准時顯示具體變更 | 更新是常見需求;整份重寫貴又容易誤改;「剛好一次」擋掉改錯位置 | 2026-11-21 |
 
 ## 模組
 
@@ -239,9 +243,6 @@
        workspace 的測試從 17.9 秒變 11.4 秒(-36%,`CARGO_INCREMENTAL=0`,同 CI);target 從 9.3 GB 變 1.2 GB;683 個測試結果一樣。
      - cargo-nextest:整個 workspace 跑一次測試從 7.2 秒變 5.3 秒(-27%);這個 repo 沒有 doctest(nextest 不跑 doctest)。
   3. 每週全量超過約 90 分鐘:用 cargo-mutants 內建的 `--shard k/n` 拆成 matrix 平行跑,n 取「每份約 30 分鐘」;上限維持 120 分鐘當保險。
-- **跑 MCP 的 live 測試**(003 第二部分第 6 步):在有 Node 的機器上跑 `cargo test -p mcp --test live -- --ignored`
-  (stdio 由測試自己用 npx 啟動;HTTP 要先 `PORT=3001 npx -y @modelcontextprotocol/server-everything@2.3.0 streamableHttp`)。
-  有不一致就從真的 server 錄下訊息當測試資料。雲端開發環境的權限不允許執行從 npm 下載的程式,所以還沒跑過。
 - **呼叫紀錄記上它屬於哪次 agent 執行**(003 design §6):agent 一次執行有好幾次模型呼叫,各自是一筆紀錄,
   目前無法從紀錄看出它們屬於同一次執行(每筆的 request 含到那一輪為止的完整對話,所以最後一筆有全貌)。
   要改 `CallRecord` 的格式(`schema_version` 加一),等 006 分析紀錄時再決定。

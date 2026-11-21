@@ -100,7 +100,7 @@
   測試用的 MCP server(stdio 與 HTTP,可以照旗標故意出錯)、`examples/list_tools.rs`。
 - `crates/agent`:`McpTool`(MCP 工具 → `ErasedTool`,jsonschema 驗證參數)、`[[mcp]]` 設定與白名單、CLI 在第一次呼叫模型之前連好所有 server。
 - 測試:mcp 118 個(單元 + 整合;client 的整合測試每個都對兩種傳輸各跑一次),agent 多了 31 個(23 個單元 + 8 個 E2E);
-  `#[ignore]` 的 live 測試 2 個(對官方參考 server,**還沒實際跑過**,見 §5 第 5 點)。
+  `#[ignore]` 的 live 測試 2 個(對官方參考 server,2026-11-21 跑過、都通過,見 §5 第 5 點)。
 
 ## 2. 學到的 Rust 概念(依步驟,附 Java 對照)
 
@@ -149,8 +149,9 @@
 2. **一樣東西用了別人的實作,就要讀它的預設值**:jsonschema 的預設(回溯 regex、抓遠端 `$ref`)在「schema 是不可信輸入」的情境下都是漏洞。
 3. **測試 server 要夠「真」才測得出時序**:乾淨俐落的假 server 讓「有沒有等」「有沒有讀 stderr」都看不出差別。
 4. **先寫實作再補測試的地方要多做 mutation**:第 4 步 HTTP 與第 5 步設定是先寫實作,mutation 各抓到 3~4 個缺口;先寫測試的部分幾乎沒有。
-5. **live 測試還沒跑**:雲端開發環境的權限擋下了執行從 npm 下載的參考 server(合理的限制)。測試照參考 server 2.3.0 的原始碼寫好了,
-   要在自己的機器上跑一次(`cargo test -p mcp --test live -- --ignored`)。第一部分的教訓「假的要跟真的對過」這次只做了一半。
+5. **live 測試晚了幾天才跑,一次就過**:2026-11-15 雲端的權限擋下了執行從 npm 下載的程式;2026-11-21 換了權限模式後跑,
+   stdio 與 HTTP 都過,`x-mcp-header` 的 base64 也被參考 server 接受。第一次用 npx 跑時失敗,原因是子行程的環境變數被清空
+   (npx 拿不到 proxy 的憑證設定),錯誤訊息裡有 npm 最後印的 stderr —— D-050 與「保留 stderr 尾巴」兩個設計第一次在真的程式上被看見。
 
 ## 6. 下一部分要帶走的
 
