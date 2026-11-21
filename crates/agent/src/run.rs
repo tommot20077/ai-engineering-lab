@@ -202,9 +202,10 @@ impl<'p> Agent<'p> {
                     .into_iter()
                     .map(|a| (a.call_id, Decision::Deny))
                     .collect();
-                // 剛剛才拿到的清單,一定對得上。萬一回答沒有被收下(還有人在等),就停在這裡:
+                // 剛剛才拿到的清單,一定對得上。萬一回答沒有被收下(`resolve` 失敗時清單不變),就停在這裡:
                 // 再拉一次只會拿到同一份清單,這個迴圈會永遠轉下去。
-                if run.resolve(deny_all).is_err() || !run.pending().is_empty() {
+                let _ = run.resolve(deny_all);
+                if !run.pending().is_empty() {
                     break;
                 }
             }

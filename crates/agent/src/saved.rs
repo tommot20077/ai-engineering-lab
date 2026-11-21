@@ -81,6 +81,11 @@ pub fn save(dir: &Path, saved: &SavedRun) -> io::Result<PathBuf> {
 
 /// 讀存檔(還不刪:接續前要先確認設定沒變,不行的話使用者改好設定可以再試)。
 pub fn load(dir: &Path, run_id: Uuid) -> Result<SavedRun, SavedError> {
+    load_capped(dir, run_id, MAX_SAVED_BYTES)
+}
+
+/// `load` 的本體,上限由參數給(測試不必真的寫 16 MiB 的檔案)。
+fn load_capped(dir: &Path, run_id: Uuid, max_bytes: u64) -> Result<SavedRun, SavedError> {
     let path = path(dir, run_id);
     let unreadable = |reason: String| SavedError::Unreadable {
         path: path.clone(),
@@ -92,11 +97,11 @@ pub fn load(dir: &Path, run_id: Uuid) -> Result<SavedRun, SavedError> {
         Err(e) => return Err(unreadable(e.to_string())),
     };
     let mut bytes = Vec::new();
-    file.take(MAX_SAVED_BYTES + 1)
+    file.take(max_bytes + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| unreadable(e.to_string()))?;
-    if bytes.len() as u64 > MAX_SAVED_BYTES {
-        return Err(unreadable("it is larger than 16 MiB".into()));
+    if bytes.len() as u64 > max_bytes {
+        return Err(unreadable(format!("it is larger than {max_bytes} bytes")));
     }
     serde_json::from_slice(&bytes).map_err(|e| unreadable(e.to_string()))
 }

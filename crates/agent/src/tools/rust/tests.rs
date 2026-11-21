@@ -198,3 +198,23 @@ fn the_definition_sent_to_the_model_is_locked() {
     }));
     insta::assert_json_snapshot!("run_rust", tool.def());
 }
+
+#[tokio::test]
+async fn the_approval_shows_long_programs_in_full_up_to_16_kib() {
+    // 一百行、每行約 30 bytes(約 3 KB):全部顯示,沒有「...」。
+    let code: String = (0..100)
+        .map(|n| format!("    let value_{n:03} = {n} * 2;\n"))
+        .collect();
+    let (tool, _) = tool(Ok(Report {
+        compile: ok(),
+        run: None,
+    }));
+    let shown = tool
+        .describe_json(&json!({ "code": code }).to_string(), &ctx())
+        .await;
+    assert!(
+        shown.contains(" 100 |     let value_099 = 99 * 2;"),
+        "{shown}"
+    );
+    assert!(!shown.contains("..."), "{shown}");
+}

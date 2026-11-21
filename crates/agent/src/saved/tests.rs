@@ -123,3 +123,39 @@ fn unknown_fields_in_a_saved_run_are_refused() {
         Err(SavedError::Unreadable { .. })
     ));
 }
+
+#[test]
+fn a_saved_run_over_the_size_limit_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("s");
+    let id = Uuid::now_v7();
+    let file = save(&dir, &sample(id)).unwrap();
+    let size = std::fs::metadata(&file).unwrap().len();
+    // 剛好在上限:讀得進來;少 1 byte:拒絕。
+    assert_eq!(load_capped(&dir, id, size).unwrap(), sample(id));
+    let error = load_capped(&dir, id, size - 1).unwrap_err().to_string();
+    assert!(
+        error.ends_with(&format!("it is larger than {} bytes", size - 1)),
+        "{error}"
+    );
+}
+
+#[test]
+fn errors_other_than_missing_are_not_reported_as_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let id = Uuid::nil();
+    // 「目錄」其實是一個檔案:開檔失敗(ENOTDIR),不是「沒有這個存檔」。
+    let not_a_dir = tmp.path().join("file");
+    std::fs::write(&not_a_dir, "x").unwrap();
+    assert!(matches!(
+        load(&not_a_dir, id),
+        Err(SavedError::Unreadable { .. })
+    ));
+    // 存檔的位置是一個目錄:刪不掉(EISDIR),也不是「沒有這個存檔」。
+    let dir = tmp.path().join("s");
+    std::fs::create_dir_all(path(&dir, id)).unwrap();
+    assert!(matches!(
+        claim(&dir, id),
+        Err(SavedError::Unreadable { .. })
+    ));
+}

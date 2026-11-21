@@ -396,3 +396,30 @@ fn the_definitions_sent_to_the_model_are_locked() {
     insta::assert_json_snapshot!("write_file", WriteFile::new(f.root.clone()).def());
     insta::assert_json_snapshot!("edit_file", EditFile::new(f.root.clone()).def());
 }
+
+#[tokio::test]
+async fn a_name_the_file_system_rejects_is_reported_without_writing() {
+    // 名字太長(ENAMETOOLONG):查不到它是什麼,就不寫(不是當成「不存在」去建立)。
+    let f = fixture();
+    let long = "n".repeat(300);
+    assert_eq!(
+        write(&f, json!({"path": long, "content": "x"})).await,
+        failed(&format!("{long:?} cannot be opened"))
+    );
+}
+
+#[tokio::test]
+async fn an_edit_that_lands_exactly_on_the_limit_is_written() {
+    let f = fixture();
+    // "first\nsecond\nthird\n" 是 19 bytes;把 "first" 換成剛好讓結果是 256 KiB 的內容。
+    let fill = "x".repeat(256 * 1024 - 19 + 5);
+    assert_eq!(
+        edit(
+            &f,
+            json!({"path": "notes.txt", "old": "first", "new": fill})
+        )
+        .await,
+        Ok("edited notes.txt at line 1".to_string())
+    );
+    assert_eq!(f.read("notes.txt").len(), 256 * 1024);
+}

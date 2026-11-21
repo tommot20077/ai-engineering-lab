@@ -150,19 +150,17 @@ struct Edit {
 /// 在 `text` 裡找 `old`:剛好一次才取代。
 fn plan(text: &str, args: &EditFileArgs) -> Result<Edit, ToolError> {
     let path = &args.path;
-    if args.old.is_empty() {
+    // 第一個字元(下面找第二次出現時要跳過它);沒有第一個字元就是空字串。
+    let Some(first) = args.old.chars().next() else {
         return Err(ToolError::InvalidArgs("`old` must not be empty".into()));
-    }
+    };
     let Some(at) = text.find(&args.old) else {
         return Err(ToolError::Failed(format!(
             "`old` was not found in {path:?}; nothing was changed"
         )));
     };
     // 從下一個字元開始再找一次(允許重疊:"aa" 在 "aaa" 裡算出現兩次,取代哪一個都可能不是模型要的)。
-    let next = text
-        .get(at..)
-        .and_then(|rest| rest.chars().next())
-        .map_or(at + 1, |c| at + c.len_utf8());
+    let next = at + first.len_utf8();
     if text
         .get(next..)
         .is_some_and(|rest| rest.contains(&args.old))

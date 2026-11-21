@@ -375,9 +375,10 @@ async fn ask(pending: Vec<Approval>) -> Result<Option<Vec<ApprovalRecord>>> {
             eprintln!("{}", terminal_safe(&approval.description));
             eprint!("allow? [y/N, s = save and stop] ");
             let mut line = String::new();
+            // 讀不到(stdin 結束)時 `line` 是空的,空字串本來就是拒絕。
             let reply = match stdin.lock().read_line(&mut line) {
-                Ok(read) if read > 0 => answer(&line),
-                _ => Answer::Deny,
+                Ok(_) => answer(&line),
+                Err(_) => Answer::Deny,
             };
             if line.is_empty() {
                 // stdin 已經結束:換行補上,下一行輸出才不會接在提示後面。

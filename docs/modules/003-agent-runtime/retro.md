@@ -243,7 +243,10 @@
 - Podman 與 Mac 的 Docker Desktop 沒有實測(CLI 參數相容,但 tmpfs 的 `uid=` 選項、image 的短名稱解析可能不同)。
 - `runs` 檢查(執行並比對輸出):`rust-fix` 的題目已經寫明要印什麼,沙箱也能執行,加一個 `Check` variant 就有。
 - MCP 工具目前一律不需要核准:server 給的 `readOnlyHint` 是不可信的;要不要讓設定檔指定「這個 server 的工具要核准」,等真的接上會寫入的 server 再決定。
-- 分支累積的 Mutants (diff) 越來越久(第三部分一次 push 就是 sandbox + agent + eval);合併進 main 後基準點重設。
+- 分支累積的 Mutants (diff):第三部分整個分支 375 個 mutant、33 分鐘(上限 60),284 抓到、75 編譯不過、**16 漏掉、0 逾時**
+  (第 2 步時有 5 個逾時,`drain()` 修好之後沒有了)。16 個裡:A 類 7 個補了測試(存檔的大小上限與「不是不存在的錯誤」、
+  名字太長、`edit_file` 剛好在上限、`run_rust` 預覽的上限);等價的 3 個把多餘的條件拿掉(程式變簡單);2 個寫理由排除(常數、要非 root 才測得到)。
+  合併進 main 後基準點重設。
 
 ## 7. 文章大綱
 

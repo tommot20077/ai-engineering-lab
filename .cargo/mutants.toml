@@ -44,4 +44,9 @@ exclude_re = [
     # 取決於 server 的排版與網路分塊;上限本身另有測試(超過就 TooLarge、之後照常)。
     'crates/mcp/src/transport/http\.rs:\d+:\d+: replace > with >= in HttpTransport::read_stream',
     'crates/mcp/src/transport/http\.rs:\d+:\d+: replace > with >= in read_capped',
+    # 不值得測:存檔大小上限 16 MiB 只是常數(`* with +` 變成 16 + 1024 * 1024)。上限的行為(剛好在上限、超過)
+    # 由 `load_capped` 用小的上限測。
+    'crates/agent/src/saved\.rs:\d+:\d+: replace \* with \+',
+    # 測不到:某一段存在、是目錄,但開不起來(沒有權限)。測試以 root 執行,權限擋不住 root;這一行只影響錯誤訊息。
+    'replace match guard !meta\.is_dir\(\) with true in explain',
 ]
