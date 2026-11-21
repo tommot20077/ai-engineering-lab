@@ -12,6 +12,7 @@ fn sample(run_id: Uuid) -> SavedRun {
             max_turns: Some(3),
             root: Some("/home/me/notes".into()),
             allow_write: true,
+            allow_run: false,
             record: false,
         },
         trajectory: "/home/me/runs/x.jsonl".into(),
@@ -115,7 +116,7 @@ fn unknown_fields_in_a_saved_run_are_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let id = Uuid::nil();
     let mut value = serde_json::to_value(sample(id)).unwrap();
-    value["plan"]["allow_run"] = serde_json::json!(true);
+    value["plan"]["allow_shell"] = serde_json::json!(true);
     std::fs::write(path(tmp.path(), id), value.to_string()).unwrap();
     assert!(matches!(
         load(tmp.path(), id),

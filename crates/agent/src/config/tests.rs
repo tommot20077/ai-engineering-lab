@@ -407,3 +407,54 @@ fn misspelled_mcp_fields_are_refused() {
     let text = with_mcp("[[mcp]]\nname = \"a\"\ncommand = \"x\"\ntool = [\"t\"]\n");
     assert!(toml::from_str::<RawConfig>(&text).is_err());
 }
+
+// ---- [sandbox](003 第三部分)----
+
+#[test]
+fn the_sandbox_defaults_to_the_pinned_image_and_design_limits() {
+    let s = settings(MINIMAL).unwrap();
+    assert_eq!(s.sandbox, sandbox::ContainerConfig::default());
+}
+
+#[test]
+fn the_sandbox_can_be_tuned_and_a_relative_program_is_resolved() {
+    let s = settings(&format!(
+        "{MINIMAL}[sandbox]\nprogram = \"bin/docker\"\nrun_timeout_secs = 2\nmemory_mib = 256\n"
+    ))
+    .unwrap();
+    assert_eq!(s.sandbox.program, "/conf/bin/docker");
+    assert_eq!(
+        s.sandbox.limits.run_timeout,
+        std::time::Duration::from_secs(2)
+    );
+    assert_eq!(s.sandbox.limits.memory_bytes, 256 * 1024 * 1024);
+    // 沒有 `/`:照 PATH 找,原樣保留。
+    let s = settings(&format!("{MINIMAL}[sandbox]\nprogram = \"podman\"\n")).unwrap();
+    assert_eq!(s.sandbox.program, "podman");
+}
+
+#[test]
+fn sandbox_problems_are_listed_with_the_others() {
+    assert_eq!(
+        problems(&format!("{MINIMAL}[sandbox]\npids = 0\n")),
+        ["invalid sandbox configuration: the sandbox limit `pids` must be greater than 0"]
+    );
+    assert!(toml::from_str::<RawConfig>(&format!("{MINIMAL}[sandbox]\nnetwork = true\n")).is_err());
+}
+
+#[test]
+fn run_rust_needs_a_tool_timeout_longer_than_the_sandbox() {
+    // 載入時不檢查(不用 run_rust 的設定不受影響),`--allow-run` 時才檢查。
+    let short = settings(&format!("{MINIMAL}[limits]\ntool_timeout_secs = 25\n")).unwrap();
+    assert_eq!(
+        short.check_run_timeout(),
+        Err(
+            "limits.tool_timeout_secs (25) must be larger than sandbox.compile_timeout_secs + \
+             sandbox.run_timeout_secs (25), or run_rust is cut off before the sandbox finishes"
+                .to_string()
+        )
+    );
+    let enough = settings(&format!("{MINIMAL}[limits]\ntool_timeout_secs = 26\n")).unwrap();
+    assert_eq!(enough.check_run_timeout(), Ok(()));
+    assert_eq!(settings(MINIMAL).unwrap().check_run_timeout(), Ok(()));
+}

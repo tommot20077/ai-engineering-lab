@@ -19,6 +19,7 @@ dependencies = [
  "llm",
  "mcp",
  "proptest",
+ "sandbox",
  "schemars",
  "serde",
  "serde_json",
@@ -2369,9 +2370,11 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "serde",
  "tempfile",
  "thiserror",
  "tokio",
+ "toml",
  "uuid",
 ]
 

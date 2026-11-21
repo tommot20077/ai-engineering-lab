@@ -22,7 +22,8 @@ use agent::config::{self, McpServer, McpTransport, RawConfig, Settings};
 use agent::saved::{self, RunPlan, SUSPENDED_DIR, SavedRun};
 use agent::tools::mcp::CallTool;
 use agent::tools::{
-    Calculator, CurrentTime, EditFile, ListDir, ReadFile, Root, WriteFile, select_mcp_tools,
+    Calculator, CurrentTime, EditFile, ListDir, ReadFile, Root, RunRust, WriteFile,
+    select_mcp_tools,
 };
 use agent::trajectory::{ApprovalRecord, Event, TrajectoryWriter};
 use agent::{
@@ -41,6 +42,7 @@ use mcp::transport::{
     HttpConfig, HttpLimits, HttpTransport, StdioConfig, StdioLimits, StdioTransport, Transport,
 };
 use mcp::{ClientOptions, McpClient};
+use sandbox::ContainerSandbox;
 
 /// 存檔之後的結束碼(在等核准,還沒有答案)。
 const EXIT_SAVED: u8 = 3;
@@ -104,6 +106,7 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
         max_turns: args.max_turns,
         root,
         allow_write: args.allow_write,
+        allow_run: args.allow_run,
         record: !args.no_record,
     };
     execute(settings, plan, Begin::New(args.task), args.yes).await
@@ -151,6 +154,17 @@ async fn execute(settings: &Settings, plan: RunPlan, begin: Begin, yes: bool) ->
             tools.push(Box::new(WriteFile::new(root.clone())));
             tools.push(Box::new(EditFile::new(root)));
         }
+    }
+    if plan.allow_run {
+        settings.check_run_timeout().map_err(anyhow::Error::msg)?;
+        // 設定在載入時檢查過;docker 在不在、image 有沒有下載,要到第一次執行才知道(錯誤會交回模型、也印在畫面上)。
+        let sandbox = ContainerSandbox::new(settings.sandbox.clone())?;
+        let limits = &settings.sandbox.limits;
+        tools.push(Box::new(RunRust::new(
+            Arc::new(sandbox),
+            limits.compile_timeout.as_secs(),
+            limits.run_timeout.as_secs(),
+        )));
     }
     let (provider, records) = build_provider(settings, plan.record)?;
     // 所有 MCP server 在第一次呼叫模型之前連好、挑好工具;任何一個失敗就結束(結束碼 2),一毛錢都還沒花(design-part2 §6)。

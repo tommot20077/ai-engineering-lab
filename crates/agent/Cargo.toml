@@ -26,6 +26,8 @@ jsonschema.workspace = true
 # 檔案工具:根目錄是一個目錄 handle,每一段路徑都從上一層的 handle 開、不跟隨 symlink(D-055)。
 cap-std.workspace = true
 cap-fs-ext.workspace = true
+# `run_rust`:在容器沙箱裡編譯、執行模型寫的程式(003 第三部分,D-054)。工具只看得到 `Sandbox` trait。
+sandbox = { path = "../sandbox" }
 # `current_time` 的時間與時區;跟 llm、eval 用同一套。
 jiff.workspace = true
 # 每次執行的 id(UUID v7,開頭是時間)。

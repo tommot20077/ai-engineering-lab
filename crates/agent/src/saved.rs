@@ -34,6 +34,8 @@ pub struct RunPlan {
     /// 檔案工具的根目錄(絕對路徑:接續時的目前目錄可能不同)。
     pub root: Option<PathBuf>,
     pub allow_write: bool,
+    /// `--allow-run`(`run_rust`)。
+    pub allow_run: bool,
     /// 模型呼叫要不要寫進呼叫紀錄(`--no-record` 的反面)。
     pub record: bool,
 }

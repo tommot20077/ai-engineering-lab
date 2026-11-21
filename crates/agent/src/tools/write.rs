@@ -194,11 +194,21 @@ fn plan(text: &str, args: &EditFileArgs) -> Result<Edit, ToolError> {
 
 /// 核准提示用的預覽:每行前面加 `prefix`,最多 `PREVIEW_LINES` 行、`PREVIEW_BYTES` bytes,超過的註明。
 fn preview(text: &str, prefix: &str) -> String {
+    preview_capped(text, prefix, PREVIEW_LINES, PREVIEW_BYTES)
+}
+
+/// 同 `preview`,上限自己給(`run_rust` 要顯示比較長的程式)。
+pub(crate) fn preview_capped(
+    text: &str,
+    prefix: &str,
+    max_lines: usize,
+    max_bytes: usize,
+) -> String {
     let total = text.lines().count();
     let mut out = Vec::new();
     let mut bytes = 0;
-    for line in text.lines().take(PREVIEW_LINES) {
-        let room = PREVIEW_BYTES.saturating_sub(bytes);
+    for line in text.lines().take(max_lines) {
+        let room = max_bytes.saturating_sub(bytes);
         if room == 0 {
             break;
         }
@@ -211,7 +221,7 @@ fn preview(text: &str, prefix: &str) -> String {
         out.push(format!("{prefix}(empty)"));
     }
     let hidden = total.saturating_sub(out.len());
-    if hidden > 0 || bytes >= PREVIEW_BYTES {
+    if hidden > 0 || bytes >= max_bytes {
         out.push(format!("{prefix}... ({total} lines in total)"));
     }
     out.join("\n")

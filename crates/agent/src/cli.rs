@@ -1,7 +1,7 @@
 //! 命令列(design §8)。
 //!
 //! ```text
-//! agent run "問題" [--model default] [--root <目錄>] [--allow-write] [--yes] [--system <檔案>] [--max-turns 10] [--no-record]
+//! agent run "問題" [--model default] [--root <目錄>] [--allow-write] [--allow-run] [--yes] [--system <檔案>] [--max-turns 10] [--no-record]
 //! agent resume <run id> [--yes]
 //! ```
 
@@ -61,6 +61,11 @@ pub struct RunArgs {
     // `requires`:沒有 `--root` 就給 `--allow-write`,clap 直接報錯(寫到哪裡?)。
     #[arg(long, requires = "root")]
     pub allow_write: bool,
+
+    /// Offer run_rust: compile and run Rust code in the container sandbox ([sandbox] in the config).
+    /// Every run asks for your approval first.
+    #[arg(long)]
+    pub allow_run: bool,
 
     /// Approve every tool call without asking (for scripts; you will not see what is written first).
     #[arg(long)]
@@ -134,6 +139,7 @@ mod tests {
         assert_eq!(args.model, None);
         assert_eq!(args.root, None);
         assert!(!args.allow_write);
+        assert!(!args.allow_run);
         assert!(!args.yes);
         assert!(!args.no_record);
     }
@@ -155,6 +161,7 @@ mod tests {
             "3",
             "--no-record",
             "--allow-write",
+            "--allow-run",
             "--yes",
         ])
         .unwrap();
@@ -168,6 +175,7 @@ mod tests {
         assert_eq!(args.max_turns, Some(3));
         assert!(args.no_record);
         assert!(args.allow_write);
+        assert!(args.allow_run);
         assert!(args.yes);
     }
 

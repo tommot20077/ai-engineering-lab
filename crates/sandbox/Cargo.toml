@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
+# `[sandbox]` 設定段落的形狀(`SandboxSection`):agent.toml 與 eval.toml 共用,欄位名稱與預設值只寫一次。
+serde.workspace = true
 # `BoxFuture`:`Sandbox` 要能放進 `Arc<dyn Sandbox>`(agent 與 eval 只看得到 trait,測試可以換成假的)。
 futures.workspace = true
 # process:執行 `docker`;io-util:讀它的輸出、寫 stdin;time:每個階段的逾時;rt:取消時在背景收掉容器。
@@ -22,3 +24,4 @@ uuid.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
 tempfile.workspace = true
+toml.workspace = true

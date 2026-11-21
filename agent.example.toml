@@ -62,3 +62,18 @@ max_tokens = 4096
 # url = "https://example.com/mcp"
 # token_env = "REMOTE_MCP_SECRET"
 # tools = ["lookup"]
+
+# run_rust 的沙箱(`--allow-run` 時才用到):每次一個新容器,沒有網路、唯讀根目錄、nobody、上限如下(003 第三部分)。
+# image 必須用 digest 鎖定;沙箱不自動下載,第一次先:
+#   docker pull "$(cargo run -q -p sandbox --example run_rust -- --image)"
+# 上限都可以調、不能是 0。limits.tool_timeout_secs 要比 compile + run 長(否則 run_rust 會在沙箱結束前被切掉)。
+[sandbox]
+# program = "docker"              # 或 "podman";有 `/` 的話是路徑(相對於這個設定檔)
+# image = "docker.io/library/rust:1.99.1-slim@sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7"
+# compile_timeout_secs = 20
+# run_timeout_secs = 5
+# memory_mib = 512                # 整個容器(編譯器 + 程式),不能用 swap 繞過
+# pids = 64                       # 同時存在的行程數(執行緒也算)
+# output_kib = 64                 # stdout、stderr 各自保留多少
+# scratch_mib = 64                # 工作目錄(tmpfs)
+# code_kib = 64                   # 原始碼大小

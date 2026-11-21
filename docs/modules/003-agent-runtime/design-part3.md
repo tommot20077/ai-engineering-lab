@@ -159,6 +159,18 @@ dockerd 不會自己常駐:每個雲端 session 要先在背景啟動(`dockerd`)
   「拉到結束」的迴圈永遠停在等核准;`next()` 不會讓出執行緒,tokio 的逾時插不進來,只能等 cargo-mutants 的 300 秒。
   修法:測試用數步數的 `drain()`;`Agent::run` 問完還有人在等就停(產品端也不會空轉)。
 
+## 7.5 實作筆記(第 5 步,2026-11-21)
+
+- **`[sandbox]` 設定的形狀放在 sandbox crate(`SandboxSection`)**:agent.toml 與 eval.toml 共用;單位是秒、MiB、KiB,
+  `to_config()` 用 `ContainerSandbox::new` 的同一套規則檢查。載入設定時就檢查(用不用 `run_rust` 都一樣)。
+- **`limits.tool_timeout_secs` 要比沙箱的編譯 + 執行長**:只在 `--allow-run` 時檢查(不用 `run_rust` 的設定不受影響)。
+- **`run_rust` 只拿到 `Arc<dyn Sandbox>`**:測試用假的沙箱(記下收到的程式、回傳事先給的結果);E2E 用假的 docker(shell script);
+  `SANDBOX_DOCKER=1` 時再對真的容器跑一次。
+- **給模型的結果**:`compile: ok` / `compile: failed (…)` + rustc 的 stderr;`run: exit code N`、逾時、137 註明「可能是記憶體用完」;
+  stdout、stderr 原樣附上,截斷時註明。沙箱本身不能用(沒有 docker、image 不在)是工具錯誤,訊息原樣交回模型。
+- **說明裡的上限是設定的值**(`RunRust::new` 時組好):模型知道編譯、執行各有幾秒。
+- `RunPlan` 加 `allow_run`:存檔接續時一樣有 `run_rust`。
+
 ## 8. 不做
 
 - 通用 shell、網路存取、多檔專案(`cargo` + 外部 crate)、`runs`(執行比對輸出)。

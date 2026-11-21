@@ -9,9 +9,11 @@ use futures::future::BoxFuture;
 
 mod container;
 mod error;
+mod section;
 
 pub use container::{ContainerConfig, ContainerSandbox, DEFAULT_IMAGE, DEFAULT_PROGRAM};
 pub use error::SandboxError;
+pub use section::SandboxSection;
 
 /// 要做到哪一步。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

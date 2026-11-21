@@ -49,7 +49,7 @@ trajectory: ~/.local/share/ai-engineering-lab/agent/runs/20261114T023000Z_019a�
 ## 指令
 
 ```
-agent run "問題" [--model <別名>] [--root <目錄>] [--allow-write] [--yes] [--system <檔案>] [--max-turns <N>] [--no-record] [--config agent.toml]
+agent run "問題" [--model <別名>] [--root <目錄>] [--allow-write] [--allow-run] [--yes] [--system <檔案>] [--max-turns <N>] [--no-record] [--config agent.toml]
 agent resume <run id> [--yes]
 ```
 
@@ -60,6 +60,7 @@ agent resume <run id> [--yes]
 | `--model` | `[aliases]` 裡的別名;預設 `[agent] model` |
 | `--root` | 檔案工具(`read_file`、`list_dir`)能讀的目錄;沒給就不提供這兩個工具 |
 | `--allow-write` | 另外提供 `write_file`、`edit_file`(要搭配 `--root`);**每次寫入都會先問你** |
+| `--allow-run` | 另外提供 `run_rust`:在容器沙箱裡編譯並執行模型寫的 Rust(要 Docker 或 Podman,見下面);**每次執行都會先問你** |
 | `--yes` | 有副作用的工具不問就執行(給腳本用;你不會先看到要寫什麼) |
 | `--system` | 換掉內建的 system prompt(`src/prompt.rs`) |
 | `--max-turns` | 這次執行的輪數上限,覆寫 `[limits] max_turns` |
@@ -67,7 +68,7 @@ agent resume <run id> [--yes]
 
 ## 內建工具
 
-前四個沒有副作用(D-044);寫檔的兩個要 `--allow-write` 才提供,每次呼叫都要核准(D-056、D-058)。
+前四個沒有副作用(D-044);寫檔的兩個要 `--allow-write`、`run_rust` 要 `--allow-run` 才提供,每次呼叫都要核准(D-056、D-058)。
 
 | 工具 | 做什麼 | 安全重點 |
 |---|---|---|
@@ -77,10 +78,17 @@ agent resume <run id> [--yes]
 | `list_dir` | 列出目錄(排序、目錄加 `/`、不列隱藏檔) | 跟 `read_file` 同一套路徑規則;最多 500 項 |
 | `write_file` | 新建檔案,或整份覆寫 | 同一套路徑規則;上層目錄要已經存在;暫存檔 + `rename`(不會留下寫一半的檔案);覆寫時保留權限;256 KiB |
 | `edit_file` | 把 `old` 換成 `new` | `old` 必須**剛好出現一次**(重疊也算);核准之後執行時重新讀檔、重新找,找不到「剛好一次」就不改 |
+| `run_rust` | 編譯並執行單檔 Rust 程式,回傳編譯錯誤或結束碼與輸出 | 在 [`crates/sandbox`](../sandbox/README.md) 的容器裡:沒有網路、看不到你的檔案、nobody、記憶體 / 行程數 / 時間上限;核准時顯示完整(帶行號)的程式 |
 
 **路徑規則在 `Root`(`src/tools/root.rs`)**,四個檔案工具共用:字串先擋絕對路徑、`..`、隱藏的段;
 再從根目錄的目錄 handle(cap-std)**一段一段往下開,每一段都不跟隨 symlink**(D-055)。
 不是「拼路徑 → 檢查 → 開檔」:檢查與開檔之間的空隙裡,某一段可能被換成指向外面的 symlink(TOCTOU)。
+
+### `run_rust` 的沙箱
+
+`[sandbox]`(`agent.example.toml` 有每個欄位的說明):容器指令(`docker` / `podman`)、用 digest 鎖定的 image、上限。
+沙箱不自動下載 image,第一次先 `docker pull "$(cargo run -q -p sandbox --example run_rust -- --image)"`。
+`--allow-run` 時另外檢查 `limits.tool_timeout_secs` 比沙箱的編譯 + 執行長(預設 30 > 20 + 5),不然工具會在沙箱結束前被切掉。
 
 ### 核准
 
@@ -213,7 +221,7 @@ impl agent::Tool for Weather {
 | 檔案 | 內容 |
 |---|---|
 | `src/tool.rs` | `Tool`(有型別)、`ErasedTool`(抹除型別,MCP 工具之後實作它)、`Toolbox`(建立時檢查名稱、說明、schema) |
-| `src/tools/` | 內建工具:`calculator.rs`、`clock.rs`、`files.rs`(讀)、`write.rs`(寫)、`root.rs`(路徑規則,cap-std);`mcp.rs`:`McpTool`(MCP 工具 → `ErasedTool`)與白名單 |
+| `src/tools/` | 內建工具:`calculator.rs`、`clock.rs`、`files.rs`(讀)、`write.rs`(寫)、`root.rs`(路徑規則,cap-std)、`rust.rs`(`run_rust`);`mcp.rs`:`McpTool`(MCP 工具 → `ErasedTool`)與白名單 |
 | `src/run.rs` | agent loop:`Agent`、`Run`(一步一步拉;`RunEvent::NeedsApproval` 與 `resolve`)、`Step`、`Outcome` |
 | `src/limits.rs` | 護欄的數值 |
 | `src/config.rs` | `agent.toml` 的形狀與檢查、費用計算 |
@@ -222,6 +230,7 @@ impl agent::Tool for Weather {
 | `src/prompt.rs` | 預設的 system prompt |
 | `src/main.rs` | CLI(composition root:唯一讀設定檔、環境變數的地方) |
 | `tests/e2e.rs` | 真的執行 agent binary,上游是 wiremock(多輪工具呼叫、護欄、紀錄、軌跡) |
+| `tests/e2e_run.rs` | `run_rust`:用假的 docker(shell script)走完整條路;`SANDBOX_DOCKER=1` 時另外對真的容器跑 |
 | `tests/e2e_write.rs` | 寫檔工具與核准提示:回答從 stdin 送進去(核准、拒絕、`--yes`、控制字元) |
 | `tests/e2e_mcp.rs` | agent binary 接上真的 MCP 測試 server(stdio 與 HTTP):白名單、結果接回、子行程的環境變數、啟動失敗 |
 

@@ -1,0 +1,21 @@
+---
+source: crates/agent/src/tools/rust/tests.rs
+expression: tool.def()
+---
+{
+  "name": "run_rust",
+  "description": "在隔離的沙箱裡編譯並執行一個單檔 Rust 程式(要有 fn main;edition 2024;只有標準庫,不能用外部 crate)。沙箱沒有網路、看不到使用者的檔案;編譯最多 20 秒、執行最多 5 秒。回傳編譯錯誤,或程式的結束碼與輸出。每次執行都要使用者核准,使用者可能拒絕。",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "code": {
+        "description": "完整的 Rust 原始碼(單一檔案,要有 `fn main`)。",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "type": "object"
+  }
+}

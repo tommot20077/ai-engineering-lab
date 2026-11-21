@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use config_loader::ConfigFile;
 use llm::{DEFAULT_BASE_URL, RetryPolicy, Usage};
+use sandbox::{ContainerConfig, SandboxSection};
 use serde::{Deserialize, Serialize};
 
 use crate::limits::AgentLimits;
@@ -36,6 +37,9 @@ pub struct RawConfig {
     /// MCP server(`[[mcp]]`,可以有好幾個;003 第二部分)。
     #[serde(default)]
     pub mcp: Vec<McpSection>,
+    /// `run_rust` 的沙箱(003 第三部分)。形狀定義在 sandbox crate,eval.toml 用同一個。
+    #[serde(default)]
+    pub sandbox: SandboxSection,
 }
 
 /// 一個 `[[mcp]]`。`command` 與 `url` 恰好一個(stdio 或 HTTP)。
@@ -112,6 +116,8 @@ pub struct Settings {
     pub records_dir: PathBuf,
     pub retry: RetryPolicy,
     pub mcp: Vec<McpServer>,
+    /// `run_rust` 的沙箱(檢查過;只有 `--allow-run` 時才用到,但設定錯了在啟動時就說)。
+    pub sandbox: ContainerConfig,
 }
 
 /// 檢查過的 `[[mcp]]`。
@@ -335,10 +341,13 @@ impl Settings {
         };
 
         let mcp = check_mcp(file, &raw.mcp, &mut problems);
+        let sandbox = check_sandbox(file, &raw.sandbox, &mut problems);
 
         // 只有「沒有任何問題」時,這些 Option 才一定都是 Some;寫在同一個 match 裡就不需要 unwrap。
-        match (base_url, data_dir, records_dir) {
-            (Some(base_url), Some(data_dir), Some(records_dir)) if problems.is_empty() => {
+        match (base_url, data_dir, records_dir, sandbox) {
+            (Some(base_url), Some(data_dir), Some(records_dir), Some(sandbox))
+                if problems.is_empty() =>
+            {
                 Ok(Settings {
                     aliases: raw.aliases.clone(),
                     base_url,
@@ -350,10 +359,54 @@ impl Settings {
                     records_dir,
                     retry: RetryPolicy::default(),
                     mcp,
+                    sandbox,
                 })
             }
             _ => Err(InvalidConfig(problems)),
         }
+    }
+}
+
+/// `[sandbox]`:換成 `ContainerConfig`(同 sandbox crate 的規則)。`program` 有 `/` 的話是路徑,相對於設定檔(同 `[[mcp]] command`)。
+fn check_sandbox(
+    file: &ConfigFile<RawConfig>,
+    section: &SandboxSection,
+    problems: &mut Vec<String>,
+) -> Option<ContainerConfig> {
+    let mut section = section.clone();
+    if section.program.contains('/') {
+        match file.resolve(&section.program) {
+            Ok(path) => section.program = path.to_string_lossy().into_owned(),
+            Err(e) => {
+                problems.push(format!("sandbox.program: {e}"));
+                return None;
+            }
+        }
+    }
+    let config = match section.to_config() {
+        Ok(config) => config,
+        Err(e) => {
+            problems.push(e.to_string());
+            return None;
+        }
+    };
+    Some(config)
+}
+
+impl Settings {
+    /// 用 `run_rust`(`--allow-run`)時才檢查:工具的時間上限要比沙箱的編譯 + 執行長,
+    /// 不然沙箱還沒結束,agent 就先把工具呼叫切掉,模型只會看到「逾時」。不用 `run_rust` 的設定不受影響。
+    pub fn check_run_timeout(&self) -> Result<(), String> {
+        let limits = &self.sandbox.limits;
+        let sandbox_secs = (limits.compile_timeout + limits.run_timeout).as_secs();
+        if self.limits.tool_timeout_secs <= sandbox_secs {
+            return Err(format!(
+                "limits.tool_timeout_secs ({}) must be larger than sandbox.compile_timeout_secs + \
+                 sandbox.run_timeout_secs ({sandbox_secs}), or run_rust is cut off before the sandbox finishes",
+                self.limits.tool_timeout_secs
+            ));
+        }
+        Ok(())
     }
 }
 
