@@ -1,0 +1,26 @@
+---
+source: crates/agent/src/tools/write/tests.rs
+expression: "WriteFile::new(f.root.clone()).def()"
+---
+{
+  "name": "write_file",
+  "description": "建立一個文字檔,或用新的內容整份覆寫已有的檔案。只能寫允許的目錄底下,上層目錄必須已經存在。只改檔案裡的一小段時用 edit_file。每次寫入都要使用者核准,使用者可能拒絕。",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "content": {
+        "description": "檔案的完整內容(整份取代原本的內容)。",
+        "type": "string"
+      },
+      "path": {
+        "description": "檔案路徑,相對於允許的目錄,例如 \"notes/todo.md\"。上層目錄必須已經存在。",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "content"
+    ],
+    "type": "object"
+  }
+}

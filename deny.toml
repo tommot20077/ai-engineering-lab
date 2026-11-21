@@ -18,6 +18,9 @@ allow = [
     "MIT-0",
     # OSI 認可的寬鬆授權(只要求不冒充原作者、改過要註明):foldhash 0.2(hashbrown 0.17 → indexmap,加 jsonschema 時升版)。
     "Zlib",
+    # Apache-2.0 加上 LLVM 的例外條款:例外只「多給」權限(編譯進執行檔時不必附上授權聲明),比 Apache-2.0 更寬鬆。
+    # winx(cap-fs-ext 在 Windows 上的依賴,003 第三部分);bytecodealliance 的 crate 大多用它。
+    "Apache-2.0 WITH LLVM-exception",
 ]
 
 [bans]

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::limits::AgentLimits;
-use crate::run::{Outcome, Step};
+use crate::run::{Decision, Outcome, Step};
 
 /// 軌跡的一行。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,9 +29,16 @@ pub enum Event {
         task: String,
         tools: Vec<String>,
         limits: AgentLimits,
+        /// `--yes`:有副作用的工具不問就執行(003 第三部分)。舊的軌跡沒有這個欄位,讀成 false。
+        #[serde(default)]
+        auto_approve: bool,
     },
     Step {
         step: Step,
+    },
+    /// 使用者對等核准的工具呼叫的回答(誰同意了什麼,事後查得到)。寫在執行那一輪的 `step` 之前。
+    Approval {
+        decisions: Vec<ApprovalRecord>,
     },
     Finish {
         outcome: Outcome,
@@ -39,6 +46,14 @@ pub enum Event {
         /// 沒有價格時是 `null`(未知,不是 0)。
         cost_usd: Option<f64>,
     },
+}
+
+/// 一個工具呼叫的核准結果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovalRecord {
+    pub call_id: String,
+    pub tool: String,
+    pub decision: Decision,
 }
 
 /// 寫一次執行的軌跡。

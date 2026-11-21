@@ -1,91 +1,15 @@
 //! `read_file`、`list_dir`:只讀、限定在一個根目錄內(design §7、D-044)。
 //!
-//! 路徑是模型給的(不可信)。規則在 `Root::resolve` 一個地方:兩個工具共用,不會一個擋了一個沒擋。
-
-use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+//! 路徑是模型給的(不可信)。規則全部在 `Root`(`root.rs`):四個檔案工具共用,不會一個擋了一個沒擋。
 
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use super::root::{Root, is_hidden};
 use crate::tool::{Tool, ToolContext, ToolError};
-
-/// `read_file` 讀得進來的檔案大小上限。
-pub(crate) const MAX_FILE_BYTES: u64 = 256 * 1024;
 
 /// `list_dir` 最多列幾項。
 pub(crate) const MAX_ENTRIES: usize = 500;
-
-/// 路徑字串的長度上限(bytes)。
-const MAX_PATH_BYTES: usize = 1024;
-
-/// 工具能讀的根目錄。建立時就 `canonicalize`(解開 symlink、變成絕對路徑),之後每次比對都用它。
-#[derive(Debug, Clone)]
-pub struct Root {
-    canonical: PathBuf,
-}
-
-impl Root {
-    /// 根目錄必須存在、而且是目錄(寫入路徑 fail-loud:設定錯了在啟動時就說)。
-    pub fn new(path: impl AsRef<Path>) -> std::io::Result<Root> {
-        let canonical = path.as_ref().canonicalize()?;
-        if !canonical.is_dir() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotADirectory,
-                format!("{} is not a directory", canonical.display()),
-            ));
-        }
-        Ok(Root { canonical })
-    }
-
-    /// 把模型給的相對路徑換成根目錄底下、真實存在的絕對路徑。
-    pub(crate) fn resolve(&self, path: &str) -> Result<PathBuf, ToolError> {
-        let invalid = |reason: &str| ToolError::InvalidArgs(format!("path {path:?} {reason}"));
-        if path.len() > MAX_PATH_BYTES {
-            return Err(ToolError::InvalidArgs(format!(
-                "path is longer than {MAX_PATH_BYTES} bytes"
-            )));
-        }
-        // 第一關:只看字串的組成。`components()` 把路徑拆成一段一段,`..`、開頭的 `/` 各自是一種 Component。
-        for component in Path::new(path).components() {
-            match component {
-                Component::Normal(name) => {
-                    if is_hidden(name) {
-                        return Err(invalid(
-                            "is hidden (names starting with `.` are not readable)",
-                        ));
-                    }
-                }
-                Component::CurDir => {}
-                Component::ParentDir => return Err(invalid("must not contain `..`")),
-                // `/etc/passwd`、Windows 的 `C:\`:絕對路徑。
-                Component::RootDir | Component::Prefix(_) => {
-                    return Err(invalid("must be relative to the allowed directory"));
-                }
-            }
-        }
-        // 第二關:看檔案系統。`canonicalize` 會解開每一層 symlink;
-        // 結果必須還在根目錄底下,而且解開之後的每一段也不能是隱藏的(`notes -> .env` 也要擋)。
-        let real = self
-            .canonical
-            .join(path)
-            .canonicalize()
-            .map_err(|_| ToolError::Failed(format!("no such file or directory: {path:?}")))?;
-        // `strip_prefix` 比的是路徑的「段」,不是字串:`/data/root2` 不會被當成在 `/data/root` 底下。
-        let inside = real
-            .strip_prefix(&self.canonical)
-            .map_err(|_| invalid("points outside the allowed directory"))?;
-        if inside.components().any(|c| is_hidden(c.as_os_str())) {
-            return Err(invalid("points to a hidden file"));
-        }
-        Ok(real)
-    }
-}
-
-/// `.env`、`.git`:最常放秘密的地方(design §10-5)。
-fn is_hidden(name: &std::ffi::OsStr) -> bool {
-    name.as_encoded_bytes().first() == Some(&b'.')
-}
 
 // ---- read_file ----
 
@@ -136,28 +60,9 @@ impl Tool for ReadFile {
         if args.limit == Some(0) {
             return Err(ToolError::InvalidArgs("limit must be at least 1".into()));
         }
-        let real = self.root.resolve(&args.path)?;
-        let text = read_text(&real, &args.path)?;
+        let text = self.root.read_text(&args.path)?;
         Ok(number_lines(&text, offset, args.limit))
     }
-}
-
-fn read_text(real: &Path, path: &str) -> Result<String, ToolError> {
-    let failed = |reason: &str| ToolError::Failed(format!("{path:?} {reason}"));
-    let file = std::fs::File::open(real).map_err(|_| failed("cannot be opened"))?;
-    let metadata = file.metadata().map_err(|_| failed("cannot be opened"))?;
-    if !metadata.is_file() {
-        return Err(failed("is not a regular file"));
-    }
-    // 不信 metadata 的大小(檢查之後檔案可能變大):最多讀上限 + 1 byte,讀到超過就拒絕。
-    let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| failed("cannot be read"))?;
-    if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err(failed("is larger than 256 KiB"));
-    }
-    String::from_utf8(bytes).map_err(|_| failed("is not a UTF-8 text file"))
 }
 
 /// 加上行號;只選一部分時,最後註明是第幾行到第幾行。
@@ -222,12 +127,9 @@ impl Tool for ListDir {
 
     async fn call(&self, args: ListDirArgs, _ctx: &ToolContext) -> Result<String, ToolError> {
         let path = args.path.as_deref().unwrap_or(".");
-        let real = self.root.resolve(path)?;
+        let dir = self.root.open_dir(path)?;
         let failed = |reason: &str| ToolError::Failed(format!("{path:?} {reason}"));
-        if !real.is_dir() {
-            return Err(failed("is not a directory"));
-        }
-        let entries = std::fs::read_dir(&real).map_err(|_| failed("cannot be read"))?;
+        let entries = dir.entries().map_err(|_| failed("cannot be read"))?;
         let mut names: Vec<String> = entries
             // 讀不到的單一項目略過,不讓整個列表失敗。
             .filter_map(Result::ok)

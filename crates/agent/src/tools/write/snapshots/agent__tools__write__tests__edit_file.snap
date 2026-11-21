@@ -1,0 +1,31 @@
+---
+source: crates/agent/src/tools/write/tests.rs
+expression: "EditFile::new(f.root.clone()).def()"
+---
+{
+  "name": "edit_file",
+  "description": "把文字檔裡的一段文字換成另一段。old 必須跟檔案內容一字不差(包括空白與換行),而且在檔案裡剛好出現一次;出現零次或不只一次都不會修改,先用 read_file 看清楚,或多包含一些前後文讓它只出現一次。每次修改都要使用者核准,使用者可能拒絕。",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "new": {
+        "description": "換成這段文字。可以是空字串(等於刪掉 `old`)。",
+        "type": "string"
+      },
+      "old": {
+        "description": "要被取代的文字:必須跟檔案內容一字不差(包括空白與換行),而且在檔案裡剛好出現一次。",
+        "type": "string"
+      },
+      "path": {
+        "description": "檔案路徑,相對於允許的目錄。",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "old",
+      "new"
+    ],
+    "type": "object"
+  }
+}

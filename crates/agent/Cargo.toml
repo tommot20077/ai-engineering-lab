@@ -23,6 +23,9 @@ futures.workspace = true
 mcp = { path = "../mcp" }
 # MCP 工具的參數驗證(D-049)。
 jsonschema.workspace = true
+# 檔案工具:根目錄是一個目錄 handle,每一段路徑都從上一層的 handle 開、不跟隨 symlink(D-055)。
+cap-std.workspace = true
+cap-fs-ext.workspace = true
 # `current_time` 的時間與時區;跟 llm、eval 用同一套。
 jiff.workspace = true
 # 每次執行的 id(UUID v7,開頭是時間)。

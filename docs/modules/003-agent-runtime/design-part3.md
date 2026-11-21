@@ -130,6 +130,21 @@ dockerd 不會自己常駐:每個雲端 session 要先在背景啟動(`dockerd`)
 - **停在等核准時 `finish()`**:結果是 `Stopped`,那一輪(模型的回應,用量已經算進去)也放進 `steps`,工具結果是空的。
 - 拒絕的呼叫:`is_error: true`,結果是固定字串 `DENIED`,`duration_ms: 0`。
 
+## 7.3 實作筆記(第 3 步,2026-11-21)
+
+- **`Root` 搬到 `tools/root.rs`**,四個檔案工具共用:字串規則(絕對路徑、`..`、隱藏的段、1024 bytes)→ 從根目錄 handle 一段一段
+  `open_dir_nofollow` → 最後一段:讀檔先看 `symlink_metadata`(不是一般檔案就不開,FIFO 開起來會卡住)、再用 `FollowSymlinks::No` 開。
+- **行為改變:指向根目錄裡面的 symlink 也不再跟隨**(第一部分允許)。規則越簡單越不容易錯;寫入時不會被 symlink 帶到別的地方。
+  隱藏檔的錯誤訊息從「are not readable」改成「are not allowed」(寫入也用同一條規則)。
+- **寫入**:`.<名字>.<uuid>.tmp`(隱藏檔,工具看不到)`create_new` + nofollow → 寫入 → 覆寫時套用原本的權限 → `sync_all` → `rename` 蓋過去;
+  失敗就刪掉暫存檔。上層目錄必須存在(不幫模型建目錄)。
+- **`edit_file` 的「剛好一次」算重疊**:`"aa"` 在 `"aaa"` 裡算兩次。核准之後執行時重新讀檔、重新找(核准時看到的可能已經變了)。
+- **核准提示的說明來自模型**:印到終端機之前把控制字元與方向控制、零寬字元換成 `?`(`cli::terminal_safe`);只有 `y` / `yes` 是核准,
+  stdin 結束也是拒絕。讀 stdin 放在 `spawn_blocking`。
+- **軌跡**:新事件 `approval`(誰同意了什麼),`start` 加 `auto_approve`(舊檔讀成 false)。
+- 測不到、只寫在註解的防線(mutation 檢查時確認是等價):最後一段的 `FollowSymlinks::No`(前面的 `symlink_metadata` 已經擋了,
+  只差在檢查與開檔之間被換掉的競爭)、暫存檔的 `create_new`、`sync_all`、失敗時刪暫存檔。
+
 ## 8. 不做
 
 - 通用 shell、網路存取、多檔專案(`cargo` + 外部 crate)、`runs`(執行比對輸出)。

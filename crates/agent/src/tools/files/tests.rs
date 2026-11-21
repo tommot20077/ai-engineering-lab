@@ -182,7 +182,7 @@ async fn hidden_files_are_rejected() {
         assert_eq!(
             read(&f, serde_json::json!({ "path": path })).await,
             invalid(&format!(
-                "path {path:?} is hidden (names starting with `.` are not readable)"
+                "path {path:?} is hidden (names starting with `.` are not allowed)"
             )),
             "{path}"
         );
@@ -191,23 +191,23 @@ async fn hidden_files_are_rejected() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn symlinks_are_followed_only_when_they_stay_inside() {
+async fn symlinks_are_never_followed() {
+    // 第三部分(D-055)起:指向裡面的也不跟隨。規則簡單,寫入時也不會被 symlink 帶到別的地方。
     let f = fixture();
+    for path in ["link_in", "link_out", "link_dot", "link_dir/inner.md"] {
+        assert_eq!(
+            read(&f, serde_json::json!({ "path": path })).await,
+            invalid(&format!(
+                "path {path:?} is or goes through a symbolic link (symbolic links are not followed)"
+            )),
+            "{path}"
+        );
+    }
     assert_eq!(
-        read(&f, serde_json::json!({"path": "link_in"})).await,
-        Ok("1\tfirst\n2\tsecond\n3\tthird".to_string())
-    );
-    assert_eq!(
-        read(&f, serde_json::json!({"path": "link_out"})).await,
-        invalid(r#"path "link_out" points outside the allowed directory"#)
-    );
-    assert_eq!(
-        read(&f, serde_json::json!({"path": "link_dot"})).await,
-        invalid(r#"path "link_dot" points to a hidden file"#)
-    );
-    assert_eq!(
-        read(&f, serde_json::json!({"path": "link_dir/inner.md"})).await,
-        Ok("1\t# inner".to_string())
+        list(&f, serde_json::json!({"path": "link_dir"})).await,
+        invalid(
+            r#"path "link_dir" is or goes through a symbolic link (symbolic links are not followed)"#
+        )
     );
 }
 
@@ -235,7 +235,7 @@ async fn only_small_utf8_regular_files_are_read() {
 #[tokio::test]
 async fn a_file_of_exactly_the_limit_is_read() {
     let f = fixture();
-    let exact = f.root.canonical.join("exact.txt");
+    let exact = f.root.path().join("exact.txt");
     fs::write(&exact, "y".repeat(256 * 1024)).unwrap();
     let result = read(&f, serde_json::json!({"path": "exact.txt"})).await;
     assert!(
@@ -294,7 +294,7 @@ async fn list_dir_follows_the_same_path_rules() {
     );
     assert_eq!(
         list(&f, serde_json::json!({"path": ".git"})).await,
-        invalid(r#"path ".git" is hidden (names starting with `.` are not readable)"#)
+        invalid(r#"path ".git" is hidden (names starting with `.` are not allowed)"#)
     );
     assert_eq!(
         list(&f, serde_json::json!({"path": "notes.txt"})).await,
@@ -305,12 +305,12 @@ async fn list_dir_follows_the_same_path_rules() {
 #[tokio::test]
 async fn an_empty_directory_says_so_and_long_listings_are_capped() {
     let f = fixture();
-    fs::create_dir(f.root.canonical.join("nothing")).unwrap();
+    fs::create_dir(f.root.path().join("nothing")).unwrap();
     assert_eq!(
         list(&f, serde_json::json!({"path": "nothing"})).await,
         Ok("(empty directory)".to_string())
     );
-    let many = f.root.canonical.join("many");
+    let many = f.root.path().join("many");
     fs::create_dir(&many).unwrap();
     for i in 0..MAX_ENTRIES + 2 {
         fs::write(many.join(format!("f{i:04}")), "").unwrap();
@@ -328,8 +328,8 @@ async fn an_empty_directory_says_so_and_long_listings_are_capped() {
 #[test]
 fn the_root_must_be_an_existing_directory() {
     let f = fixture();
-    assert!(Root::new(f.root.canonical.join("missing")).is_err());
-    let error = Root::new(f.root.canonical.join("notes.txt")).unwrap_err();
+    assert!(Root::new(f.root.path().join("missing")).is_err());
+    let error = Root::new(f.root.path().join("notes.txt")).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);
 }
 

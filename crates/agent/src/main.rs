@@ -10,18 +10,21 @@
 //! 回答印到 stdout,每一步的進度、摘要與警告印到 stderr(可以把回答導到檔案,又看得到過程)。
 
 use std::collections::BTreeMap;
+use std::io::BufRead;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use agent::cli::{Cli, Command, RunArgs};
+use agent::cli::{Cli, Command, RunArgs, approves, terminal_safe};
 use agent::config::{self, McpServer, McpTransport, RawConfig, Settings};
 use agent::tools::mcp::CallTool;
-use agent::tools::{Calculator, CurrentTime, ListDir, ReadFile, Root, select_mcp_tools};
-use agent::trajectory::{Event, TrajectoryWriter};
+use agent::tools::{
+    Calculator, CurrentTime, EditFile, ListDir, ReadFile, Root, WriteFile, select_mcp_tools,
+};
+use agent::trajectory::{ApprovalRecord, Event, TrajectoryWriter};
 use agent::{
-    Agent, AgentConfig, ApprovalPolicy, Clock, DEFAULT_SYSTEM, Decision, ErasedTool, Finished,
-    Limit, Outcome, RunEvent, Step, Toolbox,
+    Agent, AgentConfig, Approval, ApprovalPolicy, Clock, DEFAULT_SYSTEM, Decision, ErasedTool,
+    Finished, Limit, Outcome, RunEvent, Step, Toolbox,
 };
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -97,7 +100,12 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
         let root = Root::new(dir)
             .with_context(|| format!("--root {} must be an existing directory", dir.display()))?;
         tools.push(Box::new(ReadFile::new(root.clone())));
-        tools.push(Box::new(ListDir::new(root)));
+        tools.push(Box::new(ListDir::new(root.clone())));
+        // 有副作用的工具要另外打開(D-056);打開之後每次呼叫還要核准(`--yes` 才不問)。
+        if args.allow_write {
+            tools.push(Box::new(WriteFile::new(root.clone())));
+            tools.push(Box::new(EditFile::new(root)));
+        }
     }
     let (provider, records) = build_provider(settings, !args.no_record)?;
     // 所有 MCP server 在第一次呼叫模型之前連好、挑好工具;任何一個失敗就結束(結束碼 2),一毛錢都還沒花(design-part2 §6)。
@@ -115,7 +123,11 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
             limits: limits.clone(),
             clock: Clock::System,
             provider_options: ProviderMetadata::default(),
-            approval: ApprovalPolicy::Ask,
+            approval: if args.yes {
+                ApprovalPolicy::AutoApprove
+            } else {
+                ApprovalPolicy::Ask
+            },
         },
     )?;
 
@@ -142,6 +154,7 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
         task: args.task,
         tools: tool_names,
         limits: limits.clone(),
+        auto_approve: args.yes,
     });
     while let Some(event) = run.next().await {
         match event {
@@ -150,12 +163,16 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
                 write(&Event::Step { step });
             }
             RunEvent::NeedsApproval(pending) => {
-                // 核准提示在第 3 步(跟寫檔工具一起)加上;在那之前沒有工具需要核准,萬一有就全部拒絕(fail-closed)。
-                let deny_all = pending
-                    .into_iter()
-                    .map(|a| (a.call_id, Decision::Deny))
-                    .collect();
-                run.resolve(deny_all)?;
+                let decisions = ask(pending).await?;
+                write(&Event::Approval {
+                    decisions: decisions.clone(),
+                });
+                run.resolve(
+                    decisions
+                        .into_iter()
+                        .map(|d| (d.call_id, d.decision))
+                        .collect(),
+                )?;
             }
         }
     }
@@ -187,6 +204,49 @@ async fn run(settings: &Settings, args: RunArgs) -> Result<ExitCode> {
             ExitCode::from(1)
         }
     })
+}
+
+/// 在終端機上一個一個問(stderr 印說明、stdin 讀回答)。只有 `y` / `yes` 是核准;空白行、其他回答、
+/// stdin 已經結束(例如被管線接上又關掉)一律是拒絕(fail-closed)。
+///
+/// 讀 stdin 會卡住執行緒,所以放到 `spawn_blocking`:async runtime 的執行緒還要處理別的事(MCP 連線的背景 task)。
+async fn ask(pending: Vec<Approval>) -> Result<Vec<ApprovalRecord>> {
+    let decisions = tokio::task::spawn_blocking(move || {
+        let stdin = std::io::stdin();
+        pending
+            .into_iter()
+            .map(|approval| {
+                eprintln!(
+                    "\n── approval needed: {} ({})",
+                    terminal_safe(&approval.tool),
+                    terminal_safe(&approval.call_id)
+                );
+                eprintln!("{}", terminal_safe(&approval.description));
+                eprint!("allow? [y/N] ");
+                let mut answer = String::new();
+                let approved = match stdin.lock().read_line(&mut answer) {
+                    Ok(read) => read > 0 && approves(&answer),
+                    Err(_) => false,
+                };
+                if answer.is_empty() {
+                    // stdin 已經結束:換行補上,下一行輸出才不會接在提示後面。
+                    eprintln!();
+                }
+                ApprovalRecord {
+                    call_id: approval.call_id,
+                    tool: approval.tool,
+                    decision: if approved {
+                        Decision::Approve
+                    } else {
+                        Decision::Deny
+                    },
+                }
+            })
+            .collect()
+    })
+    .await
+    .context("the approval prompt failed")?;
+    Ok(decisions)
 }
 
 /// 組好的 provider 鏈,以及(有套 Record 時)紀錄的 writer:結束前要等它寫完。

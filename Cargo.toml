@@ -78,6 +78,11 @@ schemars = "1"
 # 驗證 MCP 工具的參數(003 第二部分,D-049):schema 是 server 給的,啟動時編譯一次、每次呼叫重複用。
 # 不開預設功能:預設會照 `$ref` 去抓 http 與本機檔案,規格(basic §JSON Schema)要求預設不能抓外部參照。
 jsonschema = { version = "0.61", default-features = false }
+# 檔案工具的路徑安全(003 第三部分,D-055):從根目錄的 handle 一段一段往下開(openat),不是拼路徑字串再開。
+# 「先檢查字串、再用路徑開檔」中間有空隙(TOCTOU);handle 開的永遠是根目錄底下的東西。
+cap-std = "4"
+# cap-std 的擴充:開檔時不跟隨 symlink(`FollowSymlinks::No`,O_NOFOLLOW)。
+cap-fs-ext = "4"
 
 # 只在測試用的依賴。
 proptest = "1"

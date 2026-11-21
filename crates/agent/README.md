@@ -49,27 +49,50 @@ trajectory: ~/.local/share/ai-engineering-lab/agent/runs/20261114T023000Z_019a�
 ## 指令
 
 ```
-agent run "問題" [--model <別名>] [--root <目錄>] [--system <檔案>] [--max-turns <N>] [--no-record] [--config agent.toml]
+agent run "問題" [--model <別名>] [--root <目錄>] [--allow-write] [--yes] [--system <檔案>] [--max-turns <N>] [--no-record] [--config agent.toml]
 ```
 
 | 參數 | 說明 |
 |---|---|
 | `--model` | `[aliases]` 裡的別名;預設 `[agent] model` |
 | `--root` | 檔案工具(`read_file`、`list_dir`)能讀的目錄;沒給就不提供這兩個工具 |
+| `--allow-write` | 另外提供 `write_file`、`edit_file`(要搭配 `--root`);**每次寫入都會先問你** |
+| `--yes` | 有副作用的工具不問就執行(給腳本用;你不會先看到要寫什麼) |
 | `--system` | 換掉內建的 system prompt(`src/prompt.rs`) |
 | `--max-turns` | 這次執行的輪數上限,覆寫 `[limits] max_turns` |
 | `--no-record` | 這次的模型呼叫不寫進呼叫紀錄 |
 
 ## 內建工具
 
-都沒有副作用,不需要沙箱(D-044)。
+前四個沒有副作用(D-044);寫檔的兩個要 `--allow-write` 才提供,每次呼叫都要核准(D-056、D-058)。
 
 | 工具 | 做什麼 | 安全重點 |
 |---|---|---|
 | `calculator` | `+ - * / % ^`、括號、負號、`sqrt abs ln log10 floor ceil round`、`pi e` | 自己寫的 lexer + Pratt parser,不用 eval;算式 1024 bytes、巢狀 64 層;每一步都要是有限的數 |
 | `current_time` | 現在的時間與星期幾,可指定 IANA 時區 | 時區名稱先檢查形狀再查表;時鐘可以固定(測試、eval) |
-| `read_file` | 讀文字檔,帶行號,可用 `offset`、`limit` 分段 | 只收相對路徑;解開 symlink 後必須還在根目錄裡;拒絕 `.` 開頭的路徑(`.env`、`.git`);256 KiB、UTF-8 |
+| `read_file` | 讀文字檔,帶行號,可用 `offset`、`limit` 分段 | 只收相對路徑;不跟隨 symlink;拒絕 `.` 開頭的路徑(`.env`、`.git`);256 KiB、UTF-8 |
 | `list_dir` | 列出目錄(排序、目錄加 `/`、不列隱藏檔) | 跟 `read_file` 同一套路徑規則;最多 500 項 |
+| `write_file` | 新建檔案,或整份覆寫 | 同一套路徑規則;上層目錄要已經存在;暫存檔 + `rename`(不會留下寫一半的檔案);覆寫時保留權限;256 KiB |
+| `edit_file` | 把 `old` 換成 `new` | `old` 必須**剛好出現一次**(重疊也算);核准之後執行時重新讀檔、重新找,找不到「剛好一次」就不改 |
+
+**路徑規則在 `Root`(`src/tools/root.rs`)**,四個檔案工具共用:字串先擋絕對路徑、`..`、隱藏的段;
+再從根目錄的目錄 handle(cap-std)**一段一段往下開,每一段都不跟隨 symlink**(D-055)。
+不是「拼路徑 → 檢查 → 開檔」:檢查與開檔之間的空隙裡,某一段可能被換成指向外面的 symlink(TOCTOU)。
+
+### 核准
+
+```
+── approval needed: edit_file (toolu_01…)
+edit todo.md at line 1
+- 買牛奶
++ 買豆漿
+allow? [y/N] y
+```
+
+- 只有 `y` / `yes` 是核准;空白行、其他回答、stdin 已經結束,一律是**拒絕**。拒絕的呼叫不執行,模型收到「使用者拒絕」,可以換個做法。
+- 提示裡的文字(說明、參數)來自模型,印之前把控制字元、改變文字方向的 Unicode 字元換成 `?`:模型不能清畫面、偽造輸出,或讓 `txt.exe` 看起來像 `exe.txt`。
+- 同一輪裡有副作用的呼叫一起問;沒有副作用的工具等這一輪問完才跟著執行。**等你回答的時間不算進總時間上限**。
+- 每次的回答寫進軌跡(`{"type": "approval", "decisions": [...]}`),`--yes` 時軌跡的 `start` 有 `"auto_approve": true`。
 
 ## MCP server
 
@@ -171,14 +194,15 @@ impl agent::Tool for Weather {
 | 檔案 | 內容 |
 |---|---|
 | `src/tool.rs` | `Tool`(有型別)、`ErasedTool`(抹除型別,MCP 工具之後實作它)、`Toolbox`(建立時檢查名稱、說明、schema) |
-| `src/tools/` | 內建工具:`calculator.rs`、`clock.rs`、`files.rs`;`mcp.rs`:`McpTool`(MCP 工具 → `ErasedTool`)與白名單 |
-| `src/run.rs` | agent loop:`Agent`、`Run`(一步一步拉)、`Step`、`Outcome` |
+| `src/tools/` | 內建工具:`calculator.rs`、`clock.rs`、`files.rs`(讀)、`write.rs`(寫)、`root.rs`(路徑規則,cap-std);`mcp.rs`:`McpTool`(MCP 工具 → `ErasedTool`)與白名單 |
+| `src/run.rs` | agent loop:`Agent`、`Run`(一步一步拉;`RunEvent::NeedsApproval` 與 `resolve`)、`Step`、`Outcome` |
 | `src/limits.rs` | 護欄的數值 |
 | `src/config.rs` | `agent.toml` 的形狀與檢查、費用計算 |
 | `src/trajectory.rs` | 軌跡的事件與寫檔(700 / 600) |
 | `src/prompt.rs` | 預設的 system prompt |
 | `src/main.rs` | CLI(composition root:唯一讀設定檔、環境變數的地方) |
 | `tests/e2e.rs` | 真的執行 agent binary,上游是 wiremock(多輪工具呼叫、護欄、紀錄、軌跡) |
+| `tests/e2e_write.rs` | 寫檔工具與核准提示:回答從 stdin 送進去(核准、拒絕、`--yes`、控制字元) |
 | `tests/e2e_mcp.rs` | agent binary 接上真的 MCP 測試 server(stdio 與 HTTP):白名單、結果接回、子行程的環境變數、啟動失敗 |
 
 ## 第一次真的跑(2026-11-14,003 第 7 步)

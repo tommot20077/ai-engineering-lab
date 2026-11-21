@@ -1,7 +1,7 @@
 //! 命令列(design §8)。
 //!
 //! ```text
-//! agent run "問題" [--model default] [--root <目錄>] [--system <檔案>] [--max-turns 10] [--no-record]
+//! agent run "問題" [--model default] [--root <目錄>] [--allow-write] [--yes] [--system <檔案>] [--max-turns 10] [--no-record]
 //! ```
 
 use std::path::PathBuf;
@@ -42,6 +42,15 @@ pub struct RunArgs {
     #[arg(long)]
     pub root: Option<PathBuf>,
 
+    /// Also offer write_file and edit_file inside --root. Every write asks for your approval first.
+    // `requires`:沒有 `--root` 就給 `--allow-write`,clap 直接報錯(寫到哪裡?)。
+    #[arg(long, requires = "root")]
+    pub allow_write: bool,
+
+    /// Approve every tool call without asking (for scripts; you will not see what is written first).
+    #[arg(long)]
+    pub yes: bool,
+
     /// File with a system prompt to use instead of the built-in one.
     #[arg(long)]
     pub system: Option<PathBuf>,
@@ -53,6 +62,29 @@ pub struct RunArgs {
     /// Do not write this run's model calls to the call records.
     #[arg(long)]
     pub no_record: bool,
+}
+
+/// 核准提示的回答:`y` / `yes`(不分大小寫、前後空白不算)才是核准,其他一律拒絕(包括空白行與讀不到)。
+pub fn approves(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+/// 把模型給的文字印到終端機之前先整理:控制字元(ESC 開頭的控制序列可以清畫面、改標題、偽造輸出)
+/// 與會改變文字方向、看不見的 Unicode 字元(例如 U+202E,讓 `txt.exe` 看起來像 `exe.txt`)都換成 `?`。
+/// 換行與 tab 保留(說明本來就有多行)。核准的人看到的必須就是會發生的事。
+pub fn terminal_safe(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\n' | '\t' => c,
+            c if c.is_control() => '?',
+            // 零寬字元、方向控制(LRM、RLM、LRE…RLO、LRI…PDI)、BOM。
+            '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}' => '?',
+            c => c,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -71,6 +103,8 @@ mod tests {
         assert_eq!(args.task, "幾點了?");
         assert_eq!(args.model, None);
         assert_eq!(args.root, None);
+        assert!(!args.allow_write);
+        assert!(!args.yes);
         assert!(!args.no_record);
     }
 
@@ -90,6 +124,8 @@ mod tests {
             "--max-turns",
             "3",
             "--no-record",
+            "--allow-write",
+            "--yes",
         ])
         .unwrap();
         assert_eq!(cli.config, PathBuf::from("x.toml"));
@@ -99,6 +135,39 @@ mod tests {
         assert_eq!(args.system, Some(PathBuf::from("prompt.md")));
         assert_eq!(args.max_turns, Some(3));
         assert!(args.no_record);
+        assert!(args.allow_write);
+        assert!(args.yes);
+    }
+
+    #[test]
+    fn allow_write_needs_a_root() {
+        let error = parse(&["run", "task", "--allow-write"]).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(parse(&["run", "task", "--allow-write", "--root", "notes"]).is_ok());
+    }
+
+    #[test]
+    fn only_yes_approves() {
+        for answer in ["y", "Y", "yes", " YES \n", "y\r\n"] {
+            assert!(approves(answer), "{answer:?}");
+        }
+        for answer in ["", "\n", "n", "no", "yess", "y y", "ok", "是"] {
+            assert!(!approves(answer), "{answer:?}");
+        }
+    }
+
+    #[test]
+    fn text_from_the_model_is_made_safe_for_the_terminal() {
+        assert_eq!(
+            terminal_safe("line 1\n\tline 2\x1b[2J\x07\r"),
+            "line 1\n\tline 2?[2J??"
+        );
+        assert_eq!(terminal_safe("notes\u{202E}txt.exe"), "notes?txt.exe");
+        assert_eq!(terminal_safe("a\u{200B}b\u{2066}c\u{FEFF}"), "a?b?c?");
+        assert_eq!(terminal_safe("中文 é 🦀"), "中文 é 🦀");
     }
 
     #[test]
