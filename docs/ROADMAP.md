@@ -233,6 +233,7 @@
   只拿到前段的結果(11 個 MISSED,已處理)。
   **使用者決定的計畫(2026-11-21),依數字分階段**:
   1. 分支一部分做完就合回 main:diff 的量跟著每一步的改動走,不會隨專案變大(這次的原因是 35 個 commit 沒合)。
+     **2026-11-21 已合回 main**(fast-forward 到 `b9e26dd`)。之後每一部分做完、CI 綠了,Claude 就 fast-forward 合回 main(使用者授權)。
   2. 合併後 diff 仍常超過約 30 分鐘:讓每個 mutant 變快。2026-11-21 在雲端 session(4 核)量過:
      - 給 mutants 的 profile 關掉 debuginfo(`debug = 0`,保留 debug assertions 與 overflow 檢查):改一個 mcp 檔案後重編整個
        workspace 的測試從 17.9 秒變 11.4 秒(-36%,`CARGO_INCREMENTAL=0`,同 CI);target 從 9.3 GB 變 1.2 GB;683 個測試結果一樣。
